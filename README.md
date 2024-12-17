@@ -6,7 +6,7 @@
  1. 前置要求，拥有一个由CF托管的一级域名
  1. 在CF控制面板的 `网络` 配置中启用 `gRPC` 功能
  1. 在DNS配置中添加一个二级域名的A记录，随意填个 IPv4 地址，开启小黄云
- 1. 新建一个 workers, 把 [src/index.js](../src/index.js) 里面的代码复制进去
+ 1. 新建一个 workers, 把 [src/index.js](./src/index.js) 里面的代码复制进去
  1. 在 workers 的配置页面添加路由，指向上面添加的二级域名，例如: `sub.your-website.com/*`
 
 代码顶部有几个配置项：  
