@@ -12,15 +12,16 @@ const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes
 function to_size(size) {
     const KiB = 1024
     const min = 1.1 * KiB
-    let i = 0
     const SIZE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
-    for (; i < SIZE_UNITS.length; i++) {
-        if (size < min) {
+    let i = 0
+    for (; i < SIZE_UNITS.length - 1; i++) {
+        if (Math.abs(size) < min) {
             break
         }
         size = size / KiB
     }
-    return `${Math.floor(size)} ${SIZE_UNITS[i]}`
+    const f = size > 0 ? Math.floor : Math.ceil
+    return `${f(size)} ${SIZE_UNITS[i]}`
 }
 
 function validate_uuid(id, uuid) {
@@ -242,11 +243,13 @@ async function upload_to_remote(counter, log, writer, vless) {
     const more = !vless.done
     while (more) {
         const r = await vless.reader.read(buff)
+        if (r.value) {
+            await inner_upload(r.value, 'remain packets')
+            buff = new Uint8Array(r.value.buffer)
+        }
         if (r.done) {
             break
         }
-        await inner_upload(r.value, 'remain packets')
-        buff = new Uint8Array(r.value.buffer)
     }
 }
 
@@ -522,7 +525,8 @@ export default {
     fetch,
 
     // for unit testing
-    parse_uuid,
-    validate_uuid,
     concat_typed_arrays,
+    parse_uuid,
+    to_size,
+    validate_uuid,
 }

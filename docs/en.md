@@ -7,15 +7,15 @@ This script is used for deploying vless-xhttp proxy on Cloudflare workers.
 #### Usage
  1. Pre-requirment: have a domain managed by Cloudflare.
  1. Enable `gRPC` feature in `network` settings in Cloudflare dashboard.
- 1. Create a DNS `A record` for a new sub-domain with a random IPv4 address. Eanble `proxy` option.
+ 1. Create a DNS `A record` for a new sub-domain with a random IPv4 address. Enable `proxy` option.
  1. Create a worker and copy-and-paste the source code from [src/index.js](../src/index.js).
  1. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub.your-website.com/*`.
 
 There are some configurations at the top of the source code.  
-UUID need no explains  
-PROXY (optional) reverse proxy for websites using Cloudflare CDN. Format: `example.com`  
-LOG_LEVEL debug, info, error, none  
-TIME_ZONE timestamp time zone of logs. e.g. Argentina is `-3`  
+`UUID` need no explains  
+`PROXY` (optional) reverse proxy for websites using Cloudflare CDN. Format: `example.com`  
+`LOG_LEVEL` debug, info, error, none  
+`TIME_ZONE` timestamp time zone of logs. e.g. Argentina is `-3`  
 
 You can setup those configurations in worker's eviroment variables config panel too. Env-vars have higher priority.  
 

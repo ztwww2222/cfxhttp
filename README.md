@@ -10,10 +10,10 @@
  1. 在 workers 的配置页面添加路由，指向上面新加的二级域名，例如: `sub.your-website.com/*`
 
 代码顶部有几个配置项：  
-UUID 这个不用解释了吧  
-PROXY 反代 CF 网页的服务器，格式： `example.com`  
-LOG_LEVEL 日志级别，可选：debug, info, error, none  
-TIME_ZONE 日志时间戳的时区，中国填 `8`  
+`UUID` 这个不用解释了吧  
+`PROXY` 反代 CF 网页的服务器，格式： `example.com`  
+`LOG_LEVEL` 日志级别，可选：debug, info, error, none  
+`TIME_ZONE` 日志时间戳的时区，中国填 `8`  
 
 这些配置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  
 
