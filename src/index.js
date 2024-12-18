@@ -4,10 +4,10 @@ import { connect } from 'cloudflare:sockets'
 const UUID = '' // vless UUID
 const PROXY = '' // (optional) reverse proxy for CF websites. e.g. example.com
 const LOG_LEVEL = 'info' // debug, info, error, none
+const TIME_ZONE = 0 // timestamp time zone of logs
 
 // source code
-const TIME_ZONE = 8 * 60 * 60 * 1000 // logging timestamp forwards 8 hours
-const BUFFER_SIZE = 4 * 1024 // download/upload buffer size in bytes
+const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes
 
 function to_size(size) {
     const KiB = 1024
@@ -68,9 +68,14 @@ function concat_typed_arrays(first, ...args) {
 class Logger {
     #id
     #level
+    #time_drift
 
-    constructor(log_level) {
+    constructor(log_level, time_zone) {
         this.#id = random_id()
+        this.#time_drift = 0
+        if (time_zone && time_zone !== 0) {
+            this.#time_drift = time_zone * 60 * 60 * 1000
+        }
 
         if (typeof log_level !== 'string') {
             log_level = 'info'
@@ -98,7 +103,7 @@ class Logger {
     }
 
     #log(prefix, ...args) {
-        const now = new Date(Date.now() + TIME_ZONE).toISOString()
+        const now = new Date(Date.now() + this.#time_drift).toISOString()
         console.log(now, prefix, `(${this.#id})`, ...args)
     }
 }
@@ -120,7 +125,7 @@ function parse_uuid(uuid) {
 }
 
 function get_buffer(size) {
-    return new Uint8Array(new ArrayBuffer(size || BUFFER_SIZE))
+    return new Uint8Array(new ArrayBuffer(size || 4 * 1024))
 }
 
 // enums
@@ -232,7 +237,7 @@ async function upload_to_remote(counter, log, writer, vless) {
         await writer.write(d)
     }
 
-    let buff = get_buffer()
+    let buff = get_buffer(BUFFER_SIZE)
     await inner_upload(vless.data, 'first packet')
     const more = !vless.done
     while (more) {
@@ -269,21 +274,25 @@ function create_downloader(log, vless, remote_readable) {
     let buffer_stream
 
     const done = new Promise((resolve, reject) => {
-        buffer_stream = new TransformStream({
-            start(controller) {
-                log.debug(`copy vless response`)
-                counter.add(vless.resp.length)
-                controller.enqueue(vless.resp)
+        buffer_stream = new TransformStream(
+            {
+                start(controller) {
+                    log.debug(`copy vless response`)
+                    counter.add(vless.resp.length)
+                    controller.enqueue(vless.resp)
+                },
+                transform(chunk, controller) {
+                    counter.add(chunk.length)
+                    controller.enqueue(chunk)
+                    log.debug(`download: ${to_size(chunk.length)}`)
+                },
+                cancel(reason) {
+                    reject(`download cancelled: ${reason}`)
+                },
             },
-            transform(chunk, controller) {
-                counter.add(chunk.length)
-                controller.enqueue(chunk)
-                log.debug(`download: ${to_size(chunk.length)}`)
-            },
-            cancel(reason) {
-                reject(`download cancelled: ${reason}`)
-            },
-        })
+            null,
+            new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+        )
         remote_readable
             .pipeTo(buffer_stream.writable)
             .catch(reject)
@@ -322,7 +331,7 @@ async function connect_to_remote(log, vless, ...remotes) {
     return await retry()
 }
 
-async function handle_client(log, readable, cfg) {
+async function handle_client(cfg, log, readable) {
     const reader = readable.getReader({ mode: 'byob' })
     const vless = await read_vless_header(reader, cfg.UUID)
     if (typeof vless !== 'object' || !vless) {
@@ -344,32 +353,27 @@ async function handle_client(log, readable, cfg) {
 
     const uploader = create_uploader(log, vless, remote.writable)
     const downloader = create_downloader(log, vless, remote.readable)
-    const connection_closed = new Promise((resolve, _) => {
-        downloader.done
-            .then(() => log.debug(`download complete`))
-            .catch((err) => log.error(`download error: ${err}`))
-            .finally(() => uploader.done)
-            .then(() => log.debug(`upload complete`))
-            .catch((err) => log.debug(`upload error: ${err}`))
-            .finally(() => {
-                const total_upload = to_size(uploader.counter.get())
-                const total_download = to_size(downloader.counter.get())
-                log.info(
-                    `connection closed, upload ${total_upload}, download ${total_download}`,
-                )
-                resolve()
-            })
-    })
 
-    return {
-        readable: downloader.readable,
-        closed: connection_closed,
-    }
+    downloader.done
+        .then(() => log.debug(`download complete`))
+        .catch((err) => log.error(`download error: ${err}`))
+        .finally(() => uploader.done)
+        .then(() => log.debug(`upload complete`))
+        .catch((err) => log.debug(`upload error: ${err}`))
+        .finally(() => {
+            const total_upload = to_size(uploader.counter.get())
+            const total_download = to_size(downloader.counter.get())
+            log.info(
+                `connection closed, upload ${total_upload}, download ${total_download}`,
+            )
+        })
+
+    return downloader.readable
 }
 
-async function handle_post(log, request, cfg) {
+async function handle_post(cfg, log, request) {
     try {
-        return await handle_client(log, request.body, cfg)
+        return await handle_client(cfg, log, request.body)
     } catch (err) {
         log.error(`handl client error: ${err}`)
     }
@@ -461,11 +465,12 @@ async function drain_connection(log, byob_reader) {
     }
 }
 
-async function fetch(request, env, ctx) {
+async function fetch(request, env) {
     const cfg = {
         UUID: env.UUID || UUID,
         PROXY: env.PROXY || PROXY,
         LOG_LEVEL: env.LOG_LEVEL || LOG_LEVEL,
+        TIME_ZONE: parseInt(env.TIME_ZONE) || TIME_ZONE,
     }
 
     if (!cfg.UUID) {
@@ -488,11 +493,10 @@ async function fetch(request, env, ctx) {
     }
 
     if (request.method === 'POST') {
-        const log = new Logger(cfg.LOG_LEVEL)
-        const r = await handle_post(log, request, cfg)
-        if (r) {
-            ctx.waitUntil(r.closed)
-            return new Response(r.readable, {
+        const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
+        const readable = await handle_post(cfg, log, request)
+        if (readable) {
+            return new Response(readable, {
                 headers: {
                     'X-Accel-Buffering': 'no',
                     'Cache-Control': 'no-store',
