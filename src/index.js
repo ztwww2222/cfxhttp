@@ -6,8 +6,16 @@ const PROXY = '' // (optional) reverse proxy for CF websites. e.g. example.com
 const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
+const UPSTREAM_DOH = 'https://dns.google/dns-query' // Upstream DNS over HTTP(S) server
+const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, empty means disabled, e.g. '/path/to/doh-query'
+
 // source code
 const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes
+
+const BAD_REQUEST = new Response(null, {
+    status: 404,
+    statusText: 'Bad Request',
+})
 
 function to_size(size) {
     const KiB = 1024
@@ -468,35 +476,94 @@ async function drain_connection(log, byob_reader) {
     }
 }
 
-async function fetch(request, env) {
+async function handle_doh(log, request, url, upstream) {
+    const mime_dnsmsg = 'application/dns-message'
+    const method = request.method
+
+    if (
+        method === 'POST' &&
+        request.headers.get('content-type') === mime_dnsmsg
+    ) {
+        log.info(`handle DoH POST request`)
+        return await fetch(upstream, {
+            method,
+            headers: {
+                Accept: mime_dnsmsg,
+                'Content-Type': mime_dnsmsg,
+            },
+            body: request.body,
+        })
+    }
+
+    if (method !== 'GET') {
+        return BAD_REQUEST
+    }
+
+    const mime_json = 'application/dns-json'
+    if (request.headers.get('Accept') === mime_json) {
+        log.info(`handle DoH GET json request`)
+        return await fetch(upstream + url.search, {
+            method,
+            headers: {
+                Accept: mime_json,
+            },
+        })
+    }
+
+    const param = url.searchParams.get('dns')
+    if (param && typeof param === 'string') {
+        log.info(`handle DoH GET hex request`)
+        return await fetch(upstream + '?dns=' + param, {
+            method,
+            headers: {
+                Accept: mime_dnsmsg,
+            },
+        })
+    }
+
+    return BAD_REQUEST
+}
+
+function handle_config(cfg, url) {
+    const items = [url.pathname, url.search]
+    for (let item of items) {
+        if (item.indexOf(`${cfg.UUID}`) >= 0) {
+            const config = create_config(url, cfg.UUID)
+            return new Response(config, {
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            })
+        }
+    }
+}
+
+async function main(request, env) {
     const cfg = {
         UUID: env.UUID || UUID,
         PROXY: env.PROXY || PROXY,
         LOG_LEVEL: env.LOG_LEVEL || LOG_LEVEL,
         TIME_ZONE: parseInt(env.TIME_ZONE) || TIME_ZONE,
+        UPSTREAM_DOH: env.UPSTREAM_DOH || UPSTREAM_DOH,
+        DOH_QUERY_PATH: env.DOH_QUERY_PATH || DOH_QUERY_PATH,
     }
 
     if (!cfg.UUID) {
         return new Response(`Error: UUID is empty`)
     }
 
+    const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
+
     if (request.method === 'GET') {
         const url = new URL(request.url)
-        const items = [url.pathname, url.search]
-        for (let item of items) {
-            if (item.indexOf(`${cfg.UUID}`) >= 0) {
-                const config = create_config(url, cfg.UUID)
-                return new Response(config, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                })
-            }
+        if (cfg.DOH_QUERY_PATH && url.pathname.endsWith(cfg.DOH_QUERY_PATH)) {
+            return handle_doh(log, request, url, cfg.UPSTREAM_DOH)
+        } else {
+            return handle_config(cfg, url)
         }
     }
 
     if (request.method === 'POST') {
-        const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
         const readable = await handle_post(cfg, log, request)
         if (readable) {
             return new Response(readable, {
@@ -512,17 +579,14 @@ async function fetch(request, env) {
             })
         }
 
-        return new Response(null, {
-            status: 404,
-            statusText: 'Bad Request',
-        })
+        return BAD_REQUEST
     }
 
     return new Response(`Hello world!`)
 }
 
 export default {
-    fetch,
+    fetch: main,
 
     // for unit testing
     concat_typed_arrays,

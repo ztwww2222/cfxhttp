@@ -14,6 +14,9 @@
 `PROXY` 反代 CF 网页的服务器，格式： `example.com`  
 `LOG_LEVEL` 日志级别，可选：debug, info, error, none  
 `TIME_ZONE` 日志时间戳的时区，中国填 `8`  
+`DOH_QUERY_PATH` DoH 服务的访问路径，留空表示关闭这个功能，示例：`/doh-query`  
+`UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS  
+
 
 这些配置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  
 
@@ -23,7 +26,8 @@
 #### 注意事项
  * 网站测速结果是错的，这个脚本很慢，不要有太高的期望
  * 只能部署到 workers，不能部署到 pages [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
+ * DoH 功能不是给 xray-core 使用的，`config.json` 请使用 DoT 例如：`tcp://8.8.8.8:53`
  * 使劲薅，免费的资源就会消失，且用且珍惜
 
 #### 感谢
-很多代码抄袭自某个项目的，但找不到原项目了，欢迎认领。  
+[tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH 功能  

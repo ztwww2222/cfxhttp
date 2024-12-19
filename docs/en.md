@@ -16,6 +16,9 @@ There are some configurations at the top of the source code.
 `PROXY` (optional) reverse proxy for websites using Cloudflare CDN. Format: `example.com`  
 `LOG_LEVEL` debug, info, error, none  
 `TIME_ZONE` timestamp time zone of logs. e.g. Argentina is `-3`  
+`DOH_QUERY_PATH` URL path for DNS over HTTP(S) feature, leave it empty means disable this feature. e.g. `/doh-query`  
+`UPSTREAM_DOH` e.g. `https://dns.google/dns-query`, do not use Cloudflare DNS  
+
 
 You can setup those configurations in worker's eviroment variables config panel too. Env-vars have higher priority.  
 
@@ -25,4 +28,8 @@ Viste `https://sub.your-website.com/xhttp/?uuid=YOUR-UUID` for `client-config.js
 #### Notice
  * This script is slow, do not expect too much.
  * Can only deploy on Cloudflare workers. [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
+ * DoH feature is no for xray-core, use DoT in `config.json` instead. e.g. `tcp://8.8.8.8:53`
  * The more people knows of this script, the sooner this script got banned.
+
+#### Credits
+[tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH feature  
