@@ -6,14 +6,14 @@ const PROXY = '' // (optional) reverse proxy for CF websites. e.g. example.com
 const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
-const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disable this feature
-const WS_PATH = '/ws' // URL path for ws protocol, empty means disable this feature
+const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disabled
+const WS_PATH = '/ws' // URL path for ws protocol, empty means disabled
 
-const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, e.g. '/doh-query', empty means disable this feature
+const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, e.g. '/doh-query', empty means disabled
 const UPSTREAM_DOH = 'https://dns.google/dns-query' // Upstream DNS over HTTP(S) server
 
 // source code
-const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes, must smaller then 1 MiB
+const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes, must smaller than 1 MiB
 
 const BAD_REQUEST = new Response(null, {
     status: 404,
