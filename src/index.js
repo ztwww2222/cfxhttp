@@ -381,7 +381,9 @@ async function handle_vless(cfg, log, readable) {
     const vless = await read_vless_header(reader, cfg.UUID)
     if (typeof vless !== 'object' || !vless) {
         log.error(`failed to parse vless header: ${vless}`)
-        await drain_connection(log, reader)
+        drain_connection(log, reader).catch((err) =>
+            log.info(`drain error: ${err}`),
+        )
         return null
     }
 
@@ -544,15 +546,11 @@ const config_template = `{
 
 async function drain_connection(log, reader) {
     log.info(`drain connection`)
-    try {
-        while (true) {
-            const r = await reader.read()
-            if (r.done) {
-                break
-            }
+    while (true) {
+        const r = await reader.read()
+        if (r.done) {
+            break
         }
-    } catch (err) {
-        log.error(`drain error: ${err}`)
     }
 }
 
