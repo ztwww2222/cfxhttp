@@ -1,6 +1,25 @@
 import { expect, test } from 'vitest'
 import index from '../src/index.js'
 
+test('get length', () => {
+    function t(o, n) {
+        const r = index.get_length(o)
+        expect(r).toBe(n)
+    }
+
+    t(new Uint8Array([]), 0)
+    t(new ArrayBuffer(0), 0)
+    t(new ArrayBuffer(), 0)
+    t('', 0)
+    t(null, 0)
+    t(undefined, 0)
+    t(void 0, 0)
+
+    t(new Uint8Array([1, 2, 3, 4]), 4)
+    t(new ArrayBuffer(3), 3)
+    t(1234, 0)
+})
+
 test('to size', () => {
     function t(n, s) {
         const r = index.to_size(n)

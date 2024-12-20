@@ -6,16 +6,23 @@ const PROXY = '' // (optional) reverse proxy for CF websites. e.g. example.com
 const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
+const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disable this feature
+const WS_PATH = '/ws' // URL path for ws protocol, empty means disable this feature
+
+const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, e.g. '/doh-query', empty means disable this feature
 const UPSTREAM_DOH = 'https://dns.google/dns-query' // Upstream DNS over HTTP(S) server
-const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, empty means disabled, e.g. '/path/to/doh-query'
 
 // source code
-const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes
+const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes, must smaller then 1 MiB
 
 const BAD_REQUEST = new Response(null, {
     status: 404,
     statusText: 'Bad Request',
 })
+
+function get_length(o) {
+    return (o && (o.length || o.byteLength)) || 0
+}
 
 function to_size(size) {
     const KiB = 1024
@@ -133,17 +140,13 @@ function parse_uuid(uuid) {
     return r
 }
 
-function get_buffer(size) {
-    return new Uint8Array(new ArrayBuffer(size || 4 * 1024))
-}
-
 // enums
 const ADDRESS_TYPE_IPV4 = 1
 const ADDRESS_TYPE_URL = 2
 const ADDRESS_TYPE_IPV6 = 3
 
 async function read_vless_header(reader, uuid_str) {
-    let r = await reader.readAtLeast(1 + 16 + 1, get_buffer())
+    let r = await readAtLeast(reader, 1 + 16 + 1)
     let rlen = 0
     let idx = 0
     let cache = r.value
@@ -163,7 +166,7 @@ async function read_vless_header(reader, uuid_str) {
             return `header too short`
         }
         idx = addr_plus1 + 1 - rlen
-        r = await reader.readAtLeast(idx, get_buffer())
+        r = await readAtLeast(reader, idx)
         rlen += r.value.length
         cache = concat_typed_arrays(cache, r.value)
     }
@@ -192,7 +195,7 @@ async function read_vless_header(reader, uuid_str) {
         if (r.done) {
             return `read address failed`
         }
-        r = await reader.readAtLeast(idx, get_buffer())
+        r = await readAtLeast(reader, idx)
         rlen += r.value.length
         cache = concat_typed_arrays(cache, r.value)
     }
@@ -241,23 +244,32 @@ async function upload_to_remote(counter, log, writer, vless) {
         if (!d) {
             log.debug(`upload detect null ${src}`)
         }
-        counter.add(d.length)
-        log.debug(`upload ${src}: ${to_size(d.length)}`)
+
+        const len = get_length(d)
+        counter.add(len)
+        log.debug(`upload ${src}: ${to_size(len)}`)
         await writer.write(d)
     }
 
-    let buff = get_buffer(BUFFER_SIZE)
     await inner_upload(vless.data, 'first packet')
     const more = !vless.done
     while (more) {
-        const r = await vless.reader.read(buff)
+        const r = await vless.reader.read()
         if (r.value) {
             await inner_upload(r.value, 'remain packets')
-            buff = new Uint8Array(r.value.buffer)
         }
         if (r.done) {
             break
         }
+    }
+}
+
+function close_writer(writer) {
+    const f = writer && writer.close
+    if (f && typeof f === 'function') {
+        f()
+            .then(() => log.debug(`upload writer closed`))
+            .catch((err) => log.debug(`upload writer error: ${err}`))
     }
 }
 
@@ -268,10 +280,7 @@ function create_uploader(log, vless, writable) {
         upload_to_remote(counter, log, writer, vless)
             .then(resolve)
             .catch(reject)
-            .finally(() => writer)
-            .close()
-            .then(() => log.debug(`upload writer closed`))
-            .catch((err) => log.debug(`upload writer error: ${err}`))
+            .finally(() => close_writer(writer))
     })
 
     return {
@@ -289,13 +298,14 @@ function create_downloader(log, vless, remote_readable) {
             {
                 start(controller) {
                     log.debug(`copy vless response`)
-                    counter.add(vless.resp.length)
+                    counter.add(get_length(vless.resp))
                     controller.enqueue(vless.resp)
                 },
                 transform(chunk, controller) {
-                    counter.add(chunk.length)
+                    const len = get_length(chunk)
+                    counter.add(len)
                     controller.enqueue(chunk)
-                    log.debug(`download: ${to_size(chunk.length)}`)
+                    log.debug(`download: ${to_size(len)}`)
                 },
                 cancel(reason) {
                     reject(`download cancelled: ${reason}`)
@@ -334,7 +344,7 @@ async function connect_to_remote(log, vless, ...remotes) {
     try {
         const remote = connect({ hostname: hostname, port: vless.port })
         const info = await remote.opened
-        log.debug(`connection opened:`, info)
+        log.debug(`connection opened:`, info.remoteAddress)
         return remote
     } catch (err) {
         log.error(`retry [${vless.hostname}] reason: ${err}`)
@@ -342,8 +352,32 @@ async function connect_to_remote(log, vless, ...remotes) {
     return await retry()
 }
 
-async function handle_client(cfg, log, readable) {
-    const reader = readable.getReader({ mode: 'byob' })
+async function readAtLeast(reader, n) {
+    let len = 0
+    const buffs = []
+    let done = false
+    while (len < n && !done) {
+        const r = await reader.read()
+        if (r.value) {
+            const b = new Uint8Array(r.value)
+            buffs.push(b)
+            len += b ? b.length : 0
+        }
+        done = r.done
+    }
+    if (len < n) {
+        throw new Error(`no enough data to read`)
+    }
+
+    const value = concat_typed_arrays(...buffs)
+    return {
+        value,
+        done,
+    }
+}
+
+async function handle_vless(cfg, log, readable) {
+    const reader = readable.getReader()
     const vless = await read_vless_header(reader, cfg.UUID)
     if (typeof vless !== 'object' || !vless) {
         log.error(`failed to parse vless header: ${vless}`)
@@ -382,29 +416,84 @@ async function handle_client(cfg, log, readable) {
     return downloader.readable
 }
 
-async function handle_post(cfg, log, request) {
+async function handle_xhttp(cfg, log, request) {
     try {
-        return await handle_client(cfg, log, request.body)
+        return await handle_vless(cfg, log, request.body)
     } catch (err) {
-        log.error(`handl client error: ${err}`)
+        log.error(`handl xhttp error: ${err}`)
     }
     return null
 }
 
-function create_config(url, uuid) {
+async function handle_ws(cfg, log, server) {
+    server.accept()
+    const client_readable = new ReadableStream({
+        start(controller) {
+            server.addEventListener('message', ({ data }) => {
+                controller.enqueue(data)
+            })
+            server.addEventListener('error', (err) => {
+                log.error(`ws client error: ${err}`)
+                controller.error(err)
+            })
+            server.addEventListener('close', () => controller.close())
+        },
+        cancel(reason) {
+            log.debug(`ws client upload error: ${reason}`)
+            server.close()
+        },
+    })
+    const client_writable = new WritableStream({
+        write(chunk) {
+            server.send(chunk)
+        },
+        abort(reason) {
+            log.debug(`ws client download error: ${reason}`)
+        },
+    })
+
+    const remote_readable = await handle_vless(cfg, log, client_readable)
+    if (remote_readable) {
+        remote_readable.pipeTo(client_writable)
+    }
+}
+
+function append_slash(path) {
+    if (!path) {
+        return '/'
+    }
+    return path.endsWith('/') ? path : `${path}/`
+}
+
+function create_config(type, url, uuid) {
     const config = JSON.parse(config_template)
     const vless = config['outbounds'][0]['settings']['vnext'][0]
     const stream = config['outbounds'][0]['streamSettings']
 
-    // workers are TLS only!
     const host = url.hostname
-    const path = url.pathname
-    vless['address'] = host
     vless['users'][0]['id'] = uuid
-    stream['xhttpSettings']['host'] = host
-    stream['xhttpSettings']['path'] = path.endsWith('/') ? path : `${path}/`
+    vless['address'] = host
     stream['tlsSettings']['serverName'] = host
 
+    const path = append_slash(url.pathname)
+    if (type === 'ws') {
+        stream['wsSettings'] = {
+            path,
+            host,
+        }
+    } else if (type === 'xhttp') {
+        stream['xhttpSettings'] = {
+            mode: 'stream-one',
+            host,
+            path,
+            noGRPCHeader: false,
+            keepAlivePeriod: 300,
+        }
+    } else {
+        return null
+    }
+
+    stream['network'] = type
     return JSON.stringify(config)
 }
 
@@ -440,14 +529,7 @@ const config_template = `{
       },
       "tag": "agentout",
       "streamSettings": {
-        "network": "xhttp",
-        "xhttpSettings": {
-          "mode": "stream-one",
-          "host": "localhost",
-          "path": "/path/",
-          "noGRPCHeader": false,
-          "keepAlivePeriod": 300
-        },
+        "network": "raw",
         "security": "tls",
         "tlsSettings": {
           "serverName": "localhost",
@@ -460,16 +542,14 @@ const config_template = `{
   ]
 }`
 
-async function drain_connection(log, byob_reader) {
+async function drain_connection(log, reader) {
     log.info(`drain connection`)
     try {
-        let buff = get_buffer()
         while (true) {
-            const r = await byob_reader.read(buff)
+            const r = await reader.read()
             if (r.done) {
                 break
             }
-            buff = new Uint8Array(r.value.buffer)
         }
     } catch (err) {
         log.error(`drain error: ${err}`)
@@ -485,7 +565,7 @@ async function handle_doh(log, request, url, upstream) {
         request.headers.get('content-type') === mime_dnsmsg
     ) {
         log.info(`handle DoH POST request`)
-        return await fetch(upstream, {
+        return fetch(upstream, {
             method,
             headers: {
                 Accept: mime_dnsmsg,
@@ -502,7 +582,7 @@ async function handle_doh(log, request, url, upstream) {
     const mime_json = 'application/dns-json'
     if (request.headers.get('Accept') === mime_json) {
         log.info(`handle DoH GET json request`)
-        return await fetch(upstream + url.search, {
+        return fetch(upstream + url.search, {
             method,
             headers: {
                 Accept: mime_json,
@@ -513,7 +593,7 @@ async function handle_doh(log, request, url, upstream) {
     const param = url.searchParams.get('dns')
     if (param && typeof param === 'string') {
         log.info(`handle DoH GET hex request`)
-        return await fetch(upstream + '?dns=' + param, {
+        return fetch(upstream + '?dns=' + param, {
             method,
             headers: {
                 Accept: mime_dnsmsg,
@@ -525,46 +605,66 @@ async function handle_doh(log, request, url, upstream) {
 }
 
 function handle_config(cfg, url) {
-    const items = [url.pathname, url.search]
-    for (let item of items) {
-        if (item.indexOf(`${cfg.UUID}`) >= 0) {
-            const config = create_config(url, cfg.UUID)
-            return new Response(config, {
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            })
+    const path = url.pathname
+    let ctype = null
+    if (url.search.indexOf(`${cfg.UUID}`) >= 0) {
+        if (cfg.XHTTP_PATH && path.endsWith(cfg.XHTTP_PATH)) {
+            ctype = 'xhttp'
+        } else if (cfg.WS_PATH && path.endsWith(cfg.WS_PATH)) {
+            ctype = 'ws'
         }
     }
+    return create_config(ctype, url, cfg.UUID)
 }
 
-async function main(request, env) {
+function load_settings(env) {
     const cfg = {
         UUID: env.UUID || UUID,
         PROXY: env.PROXY || PROXY,
         LOG_LEVEL: env.LOG_LEVEL || LOG_LEVEL,
         TIME_ZONE: parseInt(env.TIME_ZONE) || TIME_ZONE,
-        UPSTREAM_DOH: env.UPSTREAM_DOH || UPSTREAM_DOH,
-        DOH_QUERY_PATH: env.DOH_QUERY_PATH || DOH_QUERY_PATH,
-    }
 
+        XHTTP_PATH: append_slash(env.XHTTP_PATH || XHTTP_PATH),
+        WS_PATH: append_slash(env.WS_PATH || WS_PATH),
+
+        DOH_QUERY_PATH: append_slash(env.DOH_QUERY_PATH || DOH_QUERY_PATH),
+        UPSTREAM_DOH: env.UPSTREAM_DOH || UPSTREAM_DOH,
+    }
+    return cfg
+}
+
+async function main(request, env) {
+    const cfg = load_settings(env)
     if (!cfg.UUID) {
         return new Response(`Error: UUID is empty`)
     }
 
     const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
+    const url = new URL(request.url)
+    const path = url.pathname
 
-    if (request.method === 'GET') {
-        const url = new URL(request.url)
-        if (cfg.DOH_QUERY_PATH && url.pathname.endsWith(cfg.DOH_QUERY_PATH)) {
-            return handle_doh(log, request, url, cfg.UPSTREAM_DOH)
-        } else {
-            return handle_config(cfg, url)
-        }
+    if (
+        cfg.WS_PATH &&
+        path.endsWith(cfg.WS_PATH) &&
+        request.headers.get('Upgrade') === 'websocket'
+    ) {
+        log.info(`accept websocket`)
+        const [client, server] = Object.values(new WebSocketPair())
+        handle_ws(cfg, log, server).catch((err) =>
+            log.error(`handle ws client error: ${err}`),
+        )
+        return new Response(null, {
+            status: 101,
+            webSocket: client,
+        })
     }
 
-    if (request.method === 'POST') {
-        const readable = await handle_post(cfg, log, request)
+    if (
+        cfg.XHTTP_PATH &&
+        path.endsWith(cfg.XHTTP_PATH) &&
+        request.method === 'POST'
+    ) {
+        const readable = await handle_xhttp(cfg, log, request)
         if (readable) {
             return new Response(readable, {
                 headers: {
@@ -578,11 +678,26 @@ async function main(request, env) {
                 },
             })
         }
-
         return BAD_REQUEST
     }
 
-    return new Response(`Hello world!`)
+    if (cfg.DOH_QUERY_PATH && append_slash(path).endsWith(cfg.DOH_QUERY_PATH)) {
+        return handle_doh(log, request, url, cfg.UPSTREAM_DOH)
+    }
+
+    if (request.method === 'GET') {
+        const config = handle_config(cfg, url)
+        if (config) {
+            return new Response(config, {
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            })
+        }
+        return new Response(`Hello world!`)
+    }
+
+    return BAD_REQUEST
 }
 
 export default {
@@ -590,6 +705,7 @@ export default {
 
     // for unit testing
     concat_typed_arrays,
+    get_length,
     parse_uuid,
     to_size,
     validate_uuid,
