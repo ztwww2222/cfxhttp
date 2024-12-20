@@ -33,7 +33,7 @@ Viste `https://sub.your-website.com/(XHTTP_PATH)/?uuid=(YOUR-UUID)` to get `clie
  * Workers do not support UDP. Applications require UDP feature will not work. Such as DNS.
  * Workers have CPU executing-time limit. Applications require long-term connection would disconnect randomly. Such as downloading big file.
  * DoH feature is no for xray-core, use DoT in `config.json` instead. e.g. `tcp://8.8.8.8:53`  
- * Enable one of ws or xhttp transport is ok, no need to enable both.
+ * Enable one of ws or xhttp transport as needed. It's a bit wasteful to enable both.
  * XHTTP transport can only deploy on Cloudflare workers. [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * The more people knows of this script, the sooner this script got banned.
 
