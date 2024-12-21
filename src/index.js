@@ -2,18 +2,20 @@ import { connect } from 'cloudflare:sockets'
 
 // configurations
 const UUID = '' // vless UUID
-const PROXY = '' // (optional) reverse proxy for CF websites. e.g. example.com
+const PROXY = '' // (optional) reverse proxy for Cloudflare websites. e.g. example.com
 const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
 const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disabled
 const WS_PATH = '/ws' // URL path for ws protocol, empty means disabled
 
-const DOH_QUERY_PATH = '' // DNS over HTTP(S) path, e.g. '/doh-query', empty means disabled
-const UPSTREAM_DOH = 'https://dns.google/dns-query' // Upstream DNS over HTTP(S) server
+const DOH_QUERY_PATH = '' // URL path for DNS over HTTP(S), e.g. '/doh-query', empty means disabled
+const UPSTREAM_DOH = 'https://dns.google/dns-query' // upstream DNS over HTTP(S) server
+
+const IP_QUERY_PATH = '' // URL path for querying client IP information, empty means disabled
 
 // source code
-const BUFFER_SIZE = 128 * 1024 // download/upload buffer size in bytes, must smaller than 1 MiB
+const BUFFER_SIZE = 128 * 1024 // download/upload buffer-size in bytes, must smaller than 1 MiB
 
 const BAD_REQUEST = new Response(null, {
     status: 404,
@@ -40,10 +42,8 @@ function to_size(size) {
 }
 
 function validate_uuid(left, right) {
-    for (let index = 0; index < 16; index++) {
-        const v = left[index]
-        const u = right[index]
-        if (v !== u) {
+    for (let i = 0; i < 16; i++) {
+        if (left[i] !== right[i]) {
             return false
         }
     }
@@ -140,13 +140,8 @@ function parse_uuid(uuid) {
     return r
 }
 
-// enums
-const ADDRESS_TYPE_IPV4 = 1
-const ADDRESS_TYPE_URL = 2
-const ADDRESS_TYPE_IPV6 = 3
-
 async function read_vless_header(reader, cfg_uuid_str) {
-    let r = await readAtLeast(reader, 1 + 16 + 1)
+    let r = await read_atleast(reader, 1 + 16 + 1)
     let rlen = 0
     let idx = 0
     let cache = r.value
@@ -156,27 +151,31 @@ async function read_vless_header(reader, cfg_uuid_str) {
     const uuid = cache.slice(1, 1 + 16)
     const cfg_uuid = parse_uuid(cfg_uuid_str)
     if (!validate_uuid(uuid, cfg_uuid)) {
-        return `invalid UUID`
+        throw new Error(`invalid UUID`)
     }
     const pb_len = cache[1 + 16]
     const addr_plus1 = 1 + 16 + 1 + pb_len + 1 + 2 + 1
 
     if (addr_plus1 + 1 > rlen) {
         if (r.done) {
-            return `header too short`
+            throw new Error(`header too short`)
         }
         idx = addr_plus1 + 1 - rlen
-        r = await readAtLeast(reader, idx)
+        r = await read_atleast(reader, idx)
         rlen += r.value.length
         cache = concat_typed_arrays(cache, r.value)
     }
 
     const cmd = cache[1 + 16 + 1 + pb_len]
     if (cmd !== 1) {
-        return `unsupported command: ${cmd}`
+        throw new Error(`unsupported command: ${cmd}`)
     }
     const port = (cache[addr_plus1 - 1 - 2] << 8) + cache[addr_plus1 - 1 - 1]
     const atype = cache[addr_plus1 - 1]
+
+    const ADDRESS_TYPE_IPV4 = 1
+    const ADDRESS_TYPE_URL = 2
+    const ADDRESS_TYPE_IPV6 = 3
     let header_len = -1
     if (atype === ADDRESS_TYPE_IPV4) {
         header_len = addr_plus1 + 4
@@ -187,15 +186,15 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 
     if (header_len < 0) {
-        return 'read address type failed'
+        throw new Error('read address type failed')
     }
 
     idx = header_len - rlen
     if (idx > 0) {
         if (r.done) {
-            return `read address failed`
+            throw new Error(`read address failed`)
         }
-        r = await readAtLeast(reader, idx)
+        r = await read_atleast(reader, idx)
         rlen += r.value.length
         cache = concat_typed_arrays(cache, r.value)
     }
@@ -226,7 +225,7 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 
     if (hostname.length < 1) {
-        return 'parse hostname failed'
+        throw new Error('parse hostname failed')
     }
 
     return {
@@ -235,28 +234,22 @@ async function read_vless_header(reader, cfg_uuid_str) {
         data: cache.slice(header_len),
         resp: new Uint8Array([version, 0]),
         reader,
-        done: r.done,
+        more: !r.done,
     }
 }
 
-async function upload_to_remote(counter, log, writer, vless) {
-    async function inner_upload(d, tag) {
-        if (!d) {
-            log.debug(`upload detect null ${tag}`)
-        }
-
+async function upload_to_remote(counter, remote_writer, vless) {
+    async function inner_upload(d) {
         const len = get_length(d)
         counter.add(len)
-        // log.debug(`upload ${tag}: ${to_size(len)}`)
-        await writer.write(d)
+        await remote_writer.write(d)
     }
 
-    await inner_upload(vless.data, 'first packet')
-    const more = !vless.done
-    while (more) {
+    await inner_upload(vless.data)
+    while (vless.more) {
         const r = await vless.reader.read()
         if (r.value) {
-            await inner_upload(r.value, 'remain packets')
+            await inner_upload(r.value)
         }
         if (r.done) {
             break
@@ -264,13 +257,13 @@ async function upload_to_remote(counter, log, writer, vless) {
     }
 }
 
-function create_uploader(log, vless, writable) {
+function create_uploader(log, vless, remote_writable) {
     const counter = new Counter()
     const done = new Promise((resolve, reject) => {
-        const writer = writable.getWriter()
-        upload_to_remote(counter, log, writer, vless)
+        const remote_writer = remote_writable.getWriter()
+        upload_to_remote(counter, remote_writer, vless)
             .catch(reject)
-            .finally(() => writer.close())
+            .finally(() => remote_writer.close())
             .catch((err) => log.debug(`close upload writer error: ${err}`))
             .finally(resolve)
     })
@@ -283,13 +276,13 @@ function create_uploader(log, vless, writable) {
 
 function create_xhttp_downloader(log, vless, remote_readable) {
     const counter = new Counter()
-    let buffer_stream
+    let download_buffer_stream
 
     const done = new Promise((resolve, reject) => {
-        buffer_stream = new TransformStream(
+        download_buffer_stream = new TransformStream(
             {
                 start(controller) {
-                    log.debug(`copy vless response`)
+                    log.debug(`download vless response`)
                     counter.add(get_length(vless.resp))
                     controller.enqueue(vless.resp)
                 },
@@ -307,13 +300,13 @@ function create_xhttp_downloader(log, vless, remote_readable) {
             new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
         )
         remote_readable
-            .pipeTo(buffer_stream.writable)
+            .pipeTo(download_buffer_stream.writable)
             .then(resolve)
             .catch(reject)
     })
 
     return {
-        readable: buffer_stream.readable,
+        readable: download_buffer_stream.readable,
         counter,
         done,
     }
@@ -328,7 +321,9 @@ async function connect_remote(log, vless, ...remotes) {
     if (vless.hostname === hostname) {
         log.info(`direct connect [${vless.hostname}]:${vless.port}`)
     } else {
-        log.info(`proxy [${vless.hostname}]:${vless.port} through ${hostname}`)
+        log.info(
+            `proxy [${vless.hostname}]:${vless.port} through [${hostname}]`,
+        )
     }
 
     const retry = () => connect_remote(log, vless, ...remotes)
@@ -345,17 +340,19 @@ async function connect_remote(log, vless, ...remotes) {
 
 async function dial(cfg, log, client_readable) {
     const reader = client_readable.getReader()
-    const vless = await read_vless_header(reader, cfg.UUID)
-    if (typeof vless !== 'object' || !vless) {
+    let vless
+    try {
+        vless = await read_vless_header(reader, cfg.UUID)
+    } catch (err) {
         drain_connection(log, reader).catch((err) =>
             log.info(`drain error: ${err}`),
         )
-        throw new Error(`failed to parse vless header: ${vless}`)
+        throw new Error(`read vless header error: ${err.message}`)
     }
 
     const remote = await connect_remote(log, vless, vless.hostname, cfg.PROXY)
     if (!remote) {
-        throw new Error('connect to remote failed')
+        throw new Error('dial to remote failed')
     }
 
     return {
@@ -364,7 +361,7 @@ async function dial(cfg, log, client_readable) {
     }
 }
 
-async function readAtLeast(reader, n) {
+async function read_atleast(reader, n) {
     let len = 0
     const buffs = []
     let done = false
@@ -389,9 +386,9 @@ async function readAtLeast(reader, n) {
 }
 
 function format_total(upload_counter, download_counter) {
-    const total_upload = to_size(upload_counter.get())
-    const total_download = to_size(download_counter.get())
-    return `total upload: ${total_upload}, total download: ${total_download}`
+    const upload_total = to_size(upload_counter.get())
+    const download_total = to_size(download_counter.get())
+    return `upload total: ${upload_total}, download total: ${download_total}`
 }
 
 async function handle_xhttp(cfg, log, client_readable) {
@@ -410,17 +407,17 @@ async function handle_xhttp(cfg, log, client_readable) {
     return downloader.readable
 }
 
-function create_ws_client_readable(log, server) {
+function create_ws_client_readable(log, client_ws_server) {
     return new ReadableStream(
         {
             start(controller) {
-                server.addEventListener('message', ({ data }) => {
+                client_ws_server.addEventListener('message', ({ data }) => {
                     controller.enqueue(data)
                 })
-                server.addEventListener('error', (err) => {
+                client_ws_server.addEventListener('error', (err) => {
                     controller.error(err)
                 })
-                server.addEventListener('close', () => {
+                client_ws_server.addEventListener('close', () => {
                     controller.close()
                 })
             },
@@ -432,22 +429,21 @@ function create_ws_client_readable(log, server) {
     )
 }
 
-function create_ws_downloader(log, vless, server, remote_readable) {
+function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
     const counter = new Counter()
-    const writable = new WritableStream({
-        write(chunk) {
-            const len = get_length(chunk)
-            counter.add(len)
-            server.send(chunk)
-            // log.debug(`download: ${to_size(len)}`)
-        },
-        abort(reason) {
-            log.error(`ws download error: ${reason}`)
-        },
-    })
-    const writer = writable.getWriter()
-
     const done = new Promise((resolve, reject) => {
+        const writable = new WritableStream({
+            write(chunk) {
+                const len = get_length(chunk)
+                counter.add(len)
+                client_ws_server.send(chunk)
+                // log.debug(`download: ${to_size(len)}`)
+            },
+            abort(reason) {
+                log.error(`ws download error: ${reason}`)
+            },
+        })
+        const writer = writable.getWriter()
         writer
             .write(vless.resp)
             .then(() => {
@@ -464,12 +460,17 @@ function create_ws_downloader(log, vless, server, remote_readable) {
     }
 }
 
-async function handle_ws(cfg, log, server) {
-    server.accept()
-    const client_readable = create_ws_client_readable(log, server)
+async function handle_ws(cfg, log, client_ws_server) {
+    client_ws_server.accept()
+    const client_readable = create_ws_client_readable(log, client_ws_server)
     const { vless, remote } = await dial(cfg, log, client_readable)
     const uploader = create_uploader(log, vless, remote.writable)
-    const downloader = create_ws_downloader(log, vless, server, remote.readable)
+    const downloader = create_ws_downloader(
+        log,
+        vless,
+        client_ws_server,
+        remote.readable,
+    )
 
     downloader.done
         .catch((err) => log.error(`ws download error: ${err}`))
@@ -477,7 +478,7 @@ async function handle_ws(cfg, log, server) {
         .catch((err) => log.error(`ws upload error: ${err}`))
         .finally(() => {
             try {
-                server.close()
+                client_ws_server.close()
             } catch (err) {
                 log.error(`close ws client error: ${err}`)
             }
@@ -492,7 +493,7 @@ function append_slash(path) {
     return path.endsWith('/') ? path : `${path}/`
 }
 
-function create_config(type, url, uuid) {
+function create_config(ctype, url, uuid) {
     const config = JSON.parse(config_template)
     const vless = config['outbounds'][0]['settings']['vnext'][0]
     const stream = config['outbounds'][0]['streamSettings']
@@ -503,12 +504,12 @@ function create_config(type, url, uuid) {
     stream['tlsSettings']['serverName'] = host
 
     const path = append_slash(url.pathname)
-    if (type === 'ws') {
+    if (ctype === 'ws') {
         stream['wsSettings'] = {
             path,
             host,
         }
-    } else if (type === 'xhttp') {
+    } else if (ctype === 'xhttp') {
         stream['xhttpSettings'] = {
             mode: 'stream-one',
             host,
@@ -520,8 +521,8 @@ function create_config(type, url, uuid) {
         return null
     }
 
-    stream['network'] = type
-    return JSON.stringify(config)
+    stream['network'] = ctype
+    return config
 }
 
 const config_template = `{
@@ -627,10 +628,40 @@ async function handle_doh(log, request, url, upstream) {
     return BAD_REQUEST
 }
 
-function handle_config(cfg, url) {
-    const path = url.pathname
+function get_ip_info(request) {
+    const info = {
+        ip: request.headers.get('cf-connecting-ip') || '',
+        userAgent: request.headers.get('user-agent') || '',
+    }
+
+    const keys = [
+        'asOrganization',
+        'city',
+        'continent',
+        'country',
+        'latitude',
+        'longitude',
+        'region',
+        'regionCode',
+        'timezone',
+    ]
+
+    const transforms = { asOrganization: 'organization' }
+    for (let key of keys) {
+        const tkey = transforms[key]
+        info[tkey || key] = request.cf[key] || ''
+    }
+    return info
+}
+
+function handle_json(cfg, url, request) {
+    if (cfg.IP_QUERY_PATH && request.url.endsWith(cfg.IP_QUERY_PATH)) {
+        return get_ip_info(request)
+    }
+
+    const path = append_slash(url.pathname)
     let ctype = null
-    if (url.search.indexOf(`${cfg.UUID}`) >= 0) {
+    if (url.searchParams.get('uuid') === cfg.UUID) {
         if (cfg.XHTTP_PATH && path.endsWith(cfg.XHTTP_PATH)) {
             ctype = 'xhttp'
         } else if (cfg.WS_PATH && path.endsWith(cfg.WS_PATH)) {
@@ -647,11 +678,19 @@ function load_settings(env) {
         LOG_LEVEL: env.LOG_LEVEL || LOG_LEVEL,
         TIME_ZONE: parseInt(env.TIME_ZONE) || TIME_ZONE,
 
-        XHTTP_PATH: append_slash(env.XHTTP_PATH || XHTTP_PATH),
-        WS_PATH: append_slash(env.WS_PATH || WS_PATH),
+        XHTTP_PATH: env.XHTTP_PATH || XHTTP_PATH,
+        WS_PATH: env.WS_PATH || WS_PATH,
 
-        DOH_QUERY_PATH: append_slash(env.DOH_QUERY_PATH || DOH_QUERY_PATH),
+        DOH_QUERY_PATH: env.DOH_QUERY_PATH || DOH_QUERY_PATH,
         UPSTREAM_DOH: env.UPSTREAM_DOH || UPSTREAM_DOH,
+
+        // do not append slash
+        IP_QUERY_PATH: env.IP_QUERY_PATH || IP_QUERY_PATH,
+    }
+
+    const features = ['XHTTP_PATH', 'WS_PATH', 'DOH_QUERY_PATH']
+    for (let feature of features) {
+        cfg[feature] = cfg[feature] && append_slash(cfg[feature])
     }
     return cfg
 }
@@ -710,10 +749,10 @@ async function main(request, env) {
         return handle_doh(log, request, url, cfg.UPSTREAM_DOH)
     }
 
-    if (request.method === 'GET') {
-        const config = handle_config(cfg, url)
-        if (config) {
-            return new Response(config, {
+    if (request.method === 'GET' && !request.headers.get('Upgrade')) {
+        const o = handle_json(cfg, url, request)
+        if (o) {
+            return new Response(JSON.stringify(o), {
                 headers: {
                     'Content-Type': 'application/json',
                 },

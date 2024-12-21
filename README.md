@@ -20,10 +20,11 @@
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `DOH_QUERY_PATH` DoH 服务的访问路径，例如：`/doh-query`，留空表示关闭这个功能
  * `UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS  
+ * `IP_QUERY_PATH` 查询客户 IP 信息功能的访问路径，例如: `/ip-query/?key=123456`，留空表示关闭这个功能，后面那个 key 相当于密码
 
 这些配置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  
 
-一切顺利的话，访问 `https://sub.your-website.com` 会看到 `Hello world!`  
+一切顺利的话，访问 `https://sub.your-website.com` 会看到 `Hello world!`。  
 访问 `https://sub.your-website.com/(XHTTP_PATH)/?uuid=(YOUR-UUID)` 得到 xhttp 客户端的 `config.json`，把 `(XHTTP_PATH)` 改为 `(WS_PATH)` 得到 ws 的配置。
 
 #### 注意事项
@@ -38,3 +39,4 @@
 #### 感谢（代码抄袭自以下项目）
 [tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH 功能  
 [6Kmfi6HP/EDtunnel](https://github.com/6Kmfi6HP/EDtunnel/) WebSocket 传输协议功能  
+[clsn blog](https://clsn.io/post/2024-07-11-%E5%80%9F%E5%8A%A9cloudflare%E8%8E%B7%E5%8F%96%E5%85%AC%E7%BD%91ip) 获取 IP 信息功能  
