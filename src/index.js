@@ -21,7 +21,7 @@ const BAD_REQUEST = new Response(null, {
 })
 
 function get_length(o) {
-    return (o && (o.length || o.byteLength)) || 0
+    return (o && (o.byteLength || o.length)) || 0
 }
 
 function to_size(size) {
@@ -39,10 +39,10 @@ function to_size(size) {
     return `${f(size)} ${SIZE_UNITS[i]}`
 }
 
-function validate_uuid(id, uuid) {
+function validate_uuid(left, right) {
     for (let index = 0; index < 16; index++) {
-        const v = id[index]
-        const u = uuid[index]
+        const v = left[index]
+        const u = right[index]
         if (v !== u) {
             return false
         }
@@ -145,7 +145,7 @@ const ADDRESS_TYPE_IPV4 = 1
 const ADDRESS_TYPE_URL = 2
 const ADDRESS_TYPE_IPV6 = 3
 
-async function read_vless_header(reader, uuid_str) {
+async function read_vless_header(reader, cfg_uuid_str) {
     let r = await readAtLeast(reader, 1 + 16 + 1)
     let rlen = 0
     let idx = 0
@@ -153,9 +153,9 @@ async function read_vless_header(reader, uuid_str) {
     rlen += r.value.length
 
     const version = cache[0]
-    const id = cache.slice(1, 1 + 16)
-    const uuid = parse_uuid(uuid_str)
-    if (!validate_uuid(id, uuid)) {
+    const uuid = cache.slice(1, 1 + 16)
+    const cfg_uuid = parse_uuid(cfg_uuid_str)
+    if (!validate_uuid(uuid, cfg_uuid)) {
         return `invalid UUID`
     }
     const pb_len = cache[1 + 16]
@@ -240,14 +240,14 @@ async function read_vless_header(reader, uuid_str) {
 }
 
 async function upload_to_remote(counter, log, writer, vless) {
-    async function inner_upload(d, src) {
+    async function inner_upload(d, tag) {
         if (!d) {
-            log.debug(`upload detect null ${src}`)
+            log.debug(`upload detect null ${tag}`)
         }
 
         const len = get_length(d)
         counter.add(len)
-        log.debug(`upload ${src}: ${to_size(len)}`)
+        // log.debug(`upload ${tag}: ${to_size(len)}`)
         await writer.write(d)
     }
 
@@ -264,23 +264,15 @@ async function upload_to_remote(counter, log, writer, vless) {
     }
 }
 
-function close_writer(writer) {
-    const f = writer && writer.close
-    if (f && typeof f === 'function') {
-        f()
-            .then(() => log.debug(`upload writer closed`))
-            .catch((err) => log.debug(`upload writer error: ${err}`))
-    }
-}
-
 function create_uploader(log, vless, writable) {
     const counter = new Counter()
     const done = new Promise((resolve, reject) => {
         const writer = writable.getWriter()
         upload_to_remote(counter, log, writer, vless)
-            .then(resolve)
             .catch(reject)
-            .finally(() => close_writer(writer))
+            .finally(() => writer.close())
+            .catch((err) => log.debug(`close upload writer error: ${err}`))
+            .finally(resolve)
     })
 
     return {
@@ -289,7 +281,7 @@ function create_uploader(log, vless, writable) {
     }
 }
 
-function create_downloader(log, vless, remote_readable) {
+function create_xhttp_downloader(log, vless, remote_readable) {
     const counter = new Counter()
     let buffer_stream
 
@@ -305,10 +297,10 @@ function create_downloader(log, vless, remote_readable) {
                     const len = get_length(chunk)
                     counter.add(len)
                     controller.enqueue(chunk)
-                    log.debug(`download: ${to_size(len)}`)
+                    // log.debug(`download: ${to_size(len)}`)
                 },
                 cancel(reason) {
-                    reject(`download cancelled: ${reason}`)
+                    reject(reason)
                 },
             },
             null,
@@ -316,8 +308,8 @@ function create_downloader(log, vless, remote_readable) {
         )
         remote_readable
             .pipeTo(buffer_stream.writable)
+            .then(resolve)
             .catch(reject)
-            .finally(resolve)
     })
 
     return {
@@ -327,11 +319,10 @@ function create_downloader(log, vless, remote_readable) {
     }
 }
 
-async function connect_to_remote(log, vless, ...remotes) {
+async function connect_remote(log, vless, ...remotes) {
     const hostname = remotes.shift()
     if (!hostname || hostname.length < 1) {
-        log.info('all attempts failed')
-        return null
+        throw new Error('all attempts failed')
     }
 
     if (vless.hostname === hostname) {
@@ -340,7 +331,7 @@ async function connect_to_remote(log, vless, ...remotes) {
         log.info(`proxy [${vless.hostname}]:${vless.port} through ${hostname}`)
     }
 
-    const retry = () => connect_to_remote(log, vless, ...remotes)
+    const retry = () => connect_remote(log, vless, ...remotes)
     try {
         const remote = connect({ hostname: hostname, port: vless.port })
         const info = await remote.opened
@@ -350,6 +341,27 @@ async function connect_to_remote(log, vless, ...remotes) {
         log.error(`retry [${vless.hostname}] reason: ${err}`)
     }
     return await retry()
+}
+
+async function dial(cfg, log, client_readable) {
+    const reader = client_readable.getReader()
+    const vless = await read_vless_header(reader, cfg.UUID)
+    if (typeof vless !== 'object' || !vless) {
+        drain_connection(log, reader).catch((err) =>
+            log.info(`drain error: ${err}`),
+        )
+        throw new Error(`failed to parse vless header: ${vless}`)
+    }
+
+    const remote = await connect_remote(log, vless, vless.hostname, cfg.PROXY)
+    if (!remote) {
+        throw new Error('connect to remote failed')
+    }
+
+    return {
+        vless,
+        remote,
+    }
 }
 
 async function readAtLeast(reader, n) {
@@ -366,7 +378,7 @@ async function readAtLeast(reader, n) {
         done = r.done
     }
     if (len < n) {
-        throw new Error(`no enough data to read`)
+        throw new Error(`not enough data to read`)
     }
 
     const value = concat_typed_arrays(...buffs)
@@ -376,88 +388,101 @@ async function readAtLeast(reader, n) {
     }
 }
 
-async function handle_vless(cfg, log, readable) {
-    const reader = readable.getReader()
-    const vless = await read_vless_header(reader, cfg.UUID)
-    if (typeof vless !== 'object' || !vless) {
-        log.error(`failed to parse vless header: ${vless}`)
-        drain_connection(log, reader).catch((err) =>
-            log.info(`drain error: ${err}`),
-        )
-        return null
-    }
+function format_total(upload_counter, download_counter) {
+    const total_upload = to_size(upload_counter.get())
+    const total_download = to_size(download_counter.get())
+    return `total upload: ${total_upload}, total download: ${total_download}`
+}
 
-    const remote = await connect_to_remote(
-        log,
-        vless,
-        vless.hostname,
-        cfg.PROXY,
-    )
-    if (remote === null) {
-        log.error('create remote stream failed')
-        return null
-    }
-
+async function handle_xhttp(cfg, log, client_readable) {
+    const { vless, remote } = await dial(cfg, log, client_readable)
     const uploader = create_uploader(log, vless, remote.writable)
-    const downloader = create_downloader(log, vless, remote.readable)
+    const downloader = create_xhttp_downloader(log, vless, remote.readable)
 
     downloader.done
-        .then(() => log.debug(`download complete`))
-        .catch((err) => log.error(`download error: ${err}`))
+        .catch((err) => log.error(`xhttp download error: ${err}`))
         .finally(() => uploader.done)
-        .then(() => log.debug(`upload complete`))
-        .catch((err) => log.debug(`upload error: ${err}`))
-        .finally(() => {
-            const total_upload = to_size(uploader.counter.get())
-            const total_download = to_size(downloader.counter.get())
-            log.info(
-                `connection closed, upload ${total_upload}, download ${total_download}`,
-            )
-        })
+        .catch((err) => log.debug(`xhttp upload error: ${err}`))
+        .finally(() =>
+            log.info(format_total(uploader.counter, downloader.counter)),
+        )
 
     return downloader.readable
 }
 
-async function handle_xhttp(cfg, log, request) {
-    try {
-        return await handle_vless(cfg, log, request.body)
-    } catch (err) {
-        log.error(`handl xhttp error: ${err}`)
+function create_ws_client_readable(log, server) {
+    return new ReadableStream(
+        {
+            start(controller) {
+                server.addEventListener('message', ({ data }) => {
+                    controller.enqueue(data)
+                })
+                server.addEventListener('error', (err) => {
+                    controller.error(err)
+                })
+                server.addEventListener('close', () => {
+                    controller.close()
+                })
+            },
+            cancel(reason) {
+                log.error(`ws upload error: ${reason}`)
+            },
+        },
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+    )
+}
+
+function create_ws_downloader(log, vless, server, remote_readable) {
+    const counter = new Counter()
+    const writable = new WritableStream({
+        write(chunk) {
+            const len = get_length(chunk)
+            counter.add(len)
+            server.send(chunk)
+            // log.debug(`download: ${to_size(len)}`)
+        },
+        abort(reason) {
+            log.error(`ws download error: ${reason}`)
+        },
+    })
+    const writer = writable.getWriter()
+
+    const done = new Promise((resolve, reject) => {
+        writer
+            .write(vless.resp)
+            .then(() => {
+                writer.releaseLock()
+                return remote_readable.pipeTo(writable)
+            })
+            .then(resolve)
+            .catch(reject)
+    })
+
+    return {
+        counter,
+        done,
     }
-    return null
 }
 
 async function handle_ws(cfg, log, server) {
     server.accept()
-    const client_readable = new ReadableStream({
-        start(controller) {
-            server.addEventListener('message', ({ data }) => {
-                controller.enqueue(data)
-            })
-            server.addEventListener('error', (err) => {
-                log.error(`ws client error: ${err}`)
-                controller.error(err)
-            })
-            server.addEventListener('close', () => controller.close())
-        },
-        cancel(reason) {
-            log.debug(`ws client upload error: ${reason}`)
-            server.close()
-        },
-    })
-    const client_writable = new WritableStream({
-        write(chunk) {
-            server.send(chunk)
-        },
-        abort(reason) {
-            log.debug(`ws client download error: ${reason}`)
-        },
-    })
+    const client_readable = create_ws_client_readable(log, server)
+    const { vless, remote } = await dial(cfg, log, client_readable)
+    const uploader = create_uploader(log, vless, remote.writable)
+    const downloader = create_ws_downloader(log, vless, server, remote.readable)
 
-    const remote_readable = await handle_vless(cfg, log, client_readable)
-    if (remote_readable) {
-        remote_readable.pipeTo(client_writable)
-    }
+    downloader.done
+        .catch((err) => log.error(`ws download error: ${err}`))
+        .finally(() => uploader.done)
+        .catch((err) => log.error(`ws upload error: ${err}`))
+        .finally(() => {
+            try {
+                server.close()
+            } catch (err) {
+                log.error(`close ws client error: ${err}`)
+            }
+            log.info(format_total(uploader.counter, downloader.counter))
+        })
 }
 
 function append_slash(path) {
@@ -643,11 +668,11 @@ async function main(request, env) {
 
     if (
         cfg.WS_PATH &&
-        path.endsWith(cfg.WS_PATH) &&
-        request.headers.get('Upgrade') === 'websocket'
+        request.headers.get('Upgrade') === 'websocket' &&
+        path.endsWith(cfg.WS_PATH)
     ) {
-        log.info(`accept websocket`)
         const [client, server] = Object.values(new WebSocketPair())
+        // Do not block here. Client is waiting for upgrade reponse.
         handle_ws(cfg, log, server).catch((err) =>
             log.error(`handle ws client error: ${err}`),
         )
@@ -659,11 +684,11 @@ async function main(request, env) {
 
     if (
         cfg.XHTTP_PATH &&
-        path.endsWith(cfg.XHTTP_PATH) &&
-        request.method === 'POST'
+        request.method === 'POST' &&
+        path.endsWith(cfg.XHTTP_PATH)
     ) {
-        const readable = await handle_xhttp(cfg, log, request)
-        if (readable) {
+        try {
+            const readable = await handle_xhttp(cfg, log, request.body)
             return new Response(readable, {
                 headers: {
                     'X-Accel-Buffering': 'no',
@@ -675,6 +700,8 @@ async function main(request, env) {
                     // 'Transfer-Encoding': 'chunked',
                 },
             })
+        } catch (err) {
+            log.error(`handle xhttp error: ${err}`)
         }
         return BAD_REQUEST
     }

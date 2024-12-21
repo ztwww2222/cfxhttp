@@ -14,7 +14,7 @@
 代码顶部有几个配置项：  
  * `UUID` 这个不用解释了吧  
  * `PROXY` 反代 CF 网页的服务器，格式： `example.com`  
- * `LOG_LEVEL` 日志级别，可选：debug, info, error, none  
+ * `LOG_LEVEL` 日志级别，可选值：debug, info, error, none  
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`  
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
@@ -30,11 +30,11 @@
  * 网站测速结果是错的，这个脚本很慢，不要有太高的期望
  * workers 不支持 UDP，需要 UDP 功能的应用无法使用，例如：DNS
  * workers 有 CPU 时间限制，需要长时间链接的应用会随机断线，例如：下载大文件
- * DoH 功能不是给 xray-core 使用的，请在 `config.json` 中添加 DoT 例如：`tcp://8.8.8.8:53`
+ * DoH 功能不是给 xray-core 使用的，`config.json` 应使用 DoT，例如：`tcp://8.8.8.8:53`
  * ws 和 xhttp 协议按需选一个就可以，没必要两个都开
  * xhttp 协议只能部署到 workers，不能部署到 pages [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * 使劲薅，免费的资源就会消失，且用且珍惜
 
-#### 感谢
+#### 感谢（代码抄袭自以下项目）
 [tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH 功能  
 [6Kmfi6HP/EDtunnel](https://github.com/6Kmfi6HP/EDtunnel/) WebSocket 传输协议功能  
