@@ -1,6 +1,48 @@
 import { expect, test } from 'vitest'
 import index from '../src/index.js'
 
+test('random_id', () => {
+    const min = 10000
+    const max = 10000 * 10 - 1
+    for (let i = 0; i < 100; i++) {
+        expect(index.random_id()).toBeGreaterThanOrEqual(min)
+        expect(index.random_id()).toBeLessThanOrEqual(max)
+    }
+})
+
+test('random_padding', () => {
+    expect(index.random_padding(null)).toBe(null)
+    expect(index.random_padding(1234)).toBe(null)
+    expect(index.random_padding(-100)).toBe(null)
+    expect(index.random_padding(0)).toBe(null)
+    expect(index.random_padding(1)).toBe(null)
+    expect(index.random_padding('0')).toBe(null)
+    expect(index.random_padding('-1')).toBe('0')
+    expect(index.random_padding('1')).toBe('0')
+    expect(index.random_padding('4')).toBe('0000')
+
+    function t(min, max) {
+        const p = index.random_padding(`${min}-${max}`)
+        expect(p[0]).toBe('0')
+        expect(p.length).toBeLessThanOrEqual(max)
+        expect(p.length).toBeGreaterThanOrEqual(min)
+    }
+
+    for (let i = 0; i < 100; i++) {
+        t(1, 10)
+        t(1, 1)
+        t(100, 1000)
+    }
+
+    let len = index.random_padding('------------5------3------1----').length
+    expect(len >= 3 && len <= 5).toBeTruthy()
+
+    len = index.random_padding(
+        '------AAAA------5-cc-b--bbbbb--3------1----',
+    ).length
+    expect(len >= 3 && len <= 5).toBeTruthy()
+})
+
 test('get length', () => {
     function t(o, n) {
         const r = index.get_length(o)

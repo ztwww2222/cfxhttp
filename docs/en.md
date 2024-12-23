@@ -19,6 +19,7 @@ There are some configurations at the top of the source code.
  * `LOG_LEVEL` debug, info, error, none  
  * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`  
  * `XHTTP_PATH` URL path for xhttp transport. e.g. `/xhttp`. Leave it empty to disable this feature.
+ * `XPADDING_RANGE` Length range of X-Padding response header. e.g. `100-1000`, `10`, Set to `0` to disable this feature.
  * `WS_PATH` URL path for ws transport. e.g. `/ws`. Leave it empty to disable this feature.
  * `DOH_QUERY_PATH` URL path for DNS over HTTP(S) feature. e.g. `/doh-query`. Leave it empty to disable this feature.
  * `UPSTREAM_DOH` e.g. `https://dns.google/dns-query`. Do not use Cloudflare DNS.

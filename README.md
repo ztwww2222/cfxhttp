@@ -17,6 +17,7 @@
  * `LOG_LEVEL` 日志级别，可选值：debug, info, error, none  
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`  
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
+ * `XPADDING_RANGE` xhttp 协议回复头中 X-Padding 的长度范围，例如：`100-1000` 或者 `10`，填 `0` 表示关闭这个功能
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `DOH_QUERY_PATH` DoH 服务的访问路径，例如：`/doh-query`，留空表示关闭这个功能
  * `UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS  

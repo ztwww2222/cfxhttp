@@ -7,6 +7,8 @@ const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
 const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disabled
+const XPADDING_RANGE = '100-1000' // Length range of X-Padding response header
+
 const WS_PATH = '/ws' // URL path for ws protocol, empty means disabled
 
 const DOH_QUERY_PATH = '' // URL path for DNS over HTTP(S), e.g. '/doh-query', empty means disabled
@@ -124,10 +126,37 @@ class Logger {
     }
 }
 
+function random_num(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
 function random_id() {
     const min = 10000
     const max = min * 10 - 1
-    return Math.floor(Math.random() * (max - min + 1)) + min
+    return random_num(min, max)
+}
+
+// this function only run once per request
+function random_padding(range_str) {
+    if (!range_str || typeof range_str !== 'string') {
+        return null
+    }
+    const range = range_str
+        .split('-')
+        .map((s) => parseInt(s))
+        .filter((s) => s || s === 0)
+        .slice(0, 2)
+        .sort((a, b) => a - b)
+    // console.log(`range of [${range_str}] is:`, range)
+    if (range.length < 1 || range[0] < 1) {
+        return null
+    }
+    const last = range[range.length - 1]
+    if (last < 1) {
+        return null
+    }
+    const n = range[0] === last ? range[0] : random_num(range[0], last)
+    return '0'.repeat(n)
 }
 
 function parse_uuid(uuid) {
@@ -660,15 +689,15 @@ function handle_json(cfg, url, request) {
     }
 
     const path = append_slash(url.pathname)
-    let ctype = null
     if (url.searchParams.get('uuid') === cfg.UUID) {
         if (cfg.XHTTP_PATH && path.endsWith(cfg.XHTTP_PATH)) {
-            ctype = 'xhttp'
-        } else if (cfg.WS_PATH && path.endsWith(cfg.WS_PATH)) {
-            ctype = 'ws'
+            return create_config('xhttp', url, cfg.UUID)
+        }
+        if (cfg.WS_PATH && path.endsWith(cfg.WS_PATH)) {
+            return create_config('ws', url, cfg.UUID)
         }
     }
-    return create_config(ctype, url, cfg.UUID)
+    return null
 }
 
 function load_settings(env) {
@@ -686,6 +715,8 @@ function load_settings(env) {
 
         // do not append slash
         IP_QUERY_PATH: env.IP_QUERY_PATH || IP_QUERY_PATH,
+
+        XPADDING_RANGE: env.XPADDING_RANGE || XPADDING_RANGE,
     }
 
     const features = ['XHTTP_PATH', 'WS_PATH', 'DOH_QUERY_PATH']
@@ -711,7 +742,7 @@ async function main(request, env) {
         path.endsWith(cfg.WS_PATH)
     ) {
         const [client, server] = Object.values(new WebSocketPair())
-        // Do not block here. Client is waiting for upgrade reponse.
+        // Do not block here. Client is waiting for upgrade-reponse.
         handle_ws(cfg, log, server).catch((err) =>
             log.error(`handle ws client error: ${err}`),
         )
@@ -728,17 +759,20 @@ async function main(request, env) {
     ) {
         try {
             const readable = await handle_xhttp(cfg, log, request.body)
-            return new Response(readable, {
-                headers: {
-                    'X-Accel-Buffering': 'no',
-                    'Cache-Control': 'no-store',
-                    Connection: 'Keep-Alive',
-                    'User-Agent': 'Go-http-client/2.0',
-                    'Content-Type': 'application/grpc',
-                    // 'Content-Type': 'text/event-stream',
-                    // 'Transfer-Encoding': 'chunked',
-                },
-            })
+            const headers = {
+                'X-Accel-Buffering': 'no',
+                'Cache-Control': 'no-store',
+                Connection: 'Keep-Alive',
+                'User-Agent': 'Go-http-client/2.0',
+                'Content-Type': 'application/grpc',
+                // 'Content-Type': 'text/event-stream',
+                // 'Transfer-Encoding': 'chunked',
+            }
+            const padding = random_padding(cfg.XPADDING_RANGE)
+            if (padding) {
+                headers['X-Padding'] = padding
+            }
+            return new Response(readable, { headers })
         } catch (err) {
             log.error(`handle xhttp error: ${err}`)
         }
@@ -771,6 +805,8 @@ export default {
     concat_typed_arrays,
     get_length,
     parse_uuid,
+    random_id,
+    random_padding,
     to_size,
     validate_uuid,
 }
