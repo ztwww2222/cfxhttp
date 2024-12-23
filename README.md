@@ -9,7 +9,7 @@
  1. 新建一个 workers 把 [src/index.js](./src/index.js) 里面的代码复制进去
  1. 在 workers 的配置页面添加路由，指向上面新加的二级域名，例如: `sub.your-website.com/*`
 
-*如果你只使用 WebSocket 协议，那么只需要步骤 4*
+*如果你不使用 XHTTP 协议，那么只需要步骤 4*
 
 代码顶部有几个配置项：  
  * `UUID` 这个不用解释了吧  

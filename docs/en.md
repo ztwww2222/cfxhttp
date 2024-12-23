@@ -11,7 +11,7 @@ This script is used to deploy vless proxy to Cloudflare workers.
  1. Create a worker and copy-and-paste the source code from [src/index.js](../src/index.js).
  1. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub.your-website.com/*`.
 
-*If you only use WebSocket transport, then only step 4 is required.*
+*If you don't use XHTTP transport, then only step 4 is required.*
 
 There are some configurations at the top of the source code.  
  * `UUID` Need no explains.
