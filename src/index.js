@@ -91,7 +91,7 @@ class Logger {
     constructor(log_level, time_zone) {
         this.#id = random_id()
         this.#time_drift = 0
-        if (time_zone && time_zone !== 0) {
+        if (typeof time_zone === 'number' && time_zone !== 0) {
             this.#time_drift = time_zone * 60 * 60 * 1000
         }
 
@@ -136,7 +136,6 @@ function random_id() {
     return random_num(min, max)
 }
 
-// this function only run once per request
 function random_padding(range_str) {
     if (!range_str || typeof range_str !== 'string') {
         return null
@@ -147,7 +146,6 @@ function random_padding(range_str) {
         .filter((s) => s || s === 0)
         .slice(0, 2)
         .sort((a, b) => a - b)
-    // console.log(`range of [${range_str}] is:`, range)
     if (range.length < 1 || range[0] < 1) {
         return null
     }
@@ -171,10 +169,9 @@ function parse_uuid(uuid) {
 
 async function read_vless_header(reader, cfg_uuid_str) {
     let r = await read_atleast(reader, 1 + 16 + 1)
-    let rlen = 0
+    let rlen = r.value.length
     let idx = 0
     let cache = r.value
-    rlen += r.value.length
 
     const version = cache[0]
     const uuid = cache.slice(1, 1 + 16)
@@ -267,13 +264,17 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 }
 
-async function upload_to_remote(counter, remote_writer, vless) {
+async function upload_to_remote(log, counter, remote_writer, vless) {
     async function inner_upload(d) {
         const len = get_length(d)
         counter.add(len)
         await remote_writer.write(d)
+
+        // performance impact
+        // log.debug(`upload: ${to_size(len)}`)
     }
 
+    log.debug(`upload first packet`)
     await inner_upload(vless.data)
     while (vless.more) {
         const r = await vless.reader.read()
@@ -290,7 +291,7 @@ function create_uploader(log, vless, remote_writable) {
     const counter = new Counter()
     const done = new Promise((resolve, reject) => {
         const remote_writer = remote_writable.getWriter()
-        upload_to_remote(counter, remote_writer, vless)
+        upload_to_remote(log, counter, remote_writer, vless)
             .catch(reject)
             .finally(() => remote_writer.close())
             .catch((err) => log.debug(`close upload writer error: ${err}`))
@@ -319,6 +320,8 @@ function create_xhttp_downloader(log, vless, remote_readable) {
                     const len = get_length(chunk)
                     counter.add(len)
                     controller.enqueue(chunk)
+
+                    // performance impact
                     // log.debug(`download: ${to_size(len)}`)
                 },
                 cancel(reason) {
@@ -380,10 +383,6 @@ async function dial(cfg, log, client_readable) {
     }
 
     const remote = await connect_remote(log, vless, vless.hostname, cfg.PROXY)
-    if (!remote) {
-        throw new Error('dial to remote failed')
-    }
-
     return {
         vless,
         remote,
@@ -399,7 +398,7 @@ async function read_atleast(reader, n) {
         if (r.value) {
             const b = new Uint8Array(r.value)
             buffs.push(b)
-            len += b ? b.length : 0
+            len += get_length(b)
         }
         done = r.done
     }
@@ -466,6 +465,8 @@ function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
                 const len = get_length(chunk)
                 counter.add(len)
                 client_ws_server.send(chunk)
+
+                // performance impact
                 // log.debug(`download: ${to_size(len)}`)
             },
             abort(reason) {

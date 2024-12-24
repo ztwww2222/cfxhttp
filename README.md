@@ -34,6 +34,7 @@
  * workers 有 CPU 时间限制，需要长时间链接的应用会随机断线，例如：下载大文件
  * DoH 功能不是给 xray-core 使用的，`config.json` 应使用 DoT，例如：`tcp://8.8.8.8:53`
  * ws 和 xhttp 协议按需选一个就可以，没必要两个都开
+ * ws 协议不支持，也不会支持 early data 功能
  * xhttp 协议只能部署到 workers，不能部署到 pages [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * 使劲薅，免费的资源就会消失，且用且珍惜
 

@@ -36,6 +36,7 @@ Visit `https://sub.your-website.com/(XHTTP_PATH)/?uuid=(YOUR-UUID)` to get a `cl
  * Workers have CPU executing-time limit. Applications require long-term connection would disconnect randomly. Such as downloading a big file.
  * DoH feature is not for xray-core, use DoT in `config.json` instead. e.g. `tcp://8.8.8.8:53`  
  * Enable one of ws transport or xhttp transport as needed. It's a bit wasteful to enable both.
+ * WebSocket transport does not and would not support early data feature
  * The xhttp transport can only deploy to Cloudflare workers. [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * The more people knows of this script, the sooner this script got banned.
 
