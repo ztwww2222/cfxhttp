@@ -6,10 +6,10 @@ const PROXY = '' // (optional) reverse proxy for Cloudflare websites. e.g. examp
 const LOG_LEVEL = 'info' // debug, info, error, none
 const TIME_ZONE = 0 // timestamp time zone of logs
 
-const XHTTP_PATH = '/xhttp' // URL path for xhttp protocol, empty means disabled
+const XHTTP_PATH = '' // URL path for xhttp transport, e.g. '/xhttp', empty means disabled
 const XPADDING_RANGE = '100-1000' // Length range of X-Padding response header
 
-const WS_PATH = '/ws' // URL path for ws protocol, empty means disabled
+const WS_PATH = '' // URL path for ws transport, e.g. '/ws', empty means disabled
 
 const DOH_QUERY_PATH = '' // URL path for DNS over HTTP(S), e.g. '/doh-query', empty means disabled
 const UPSTREAM_DOH = 'https://dns.google/dns-query' // upstream DNS over HTTP(S) server
@@ -678,8 +678,8 @@ function get_ip_info(request) {
 
     const transforms = { asOrganization: 'organization' }
     for (let key of keys) {
-        const tkey = transforms[key]
-        info[tkey || key] = request.cf[key] || ''
+        const tkey = transforms[key] || key
+        info[tkey] = request.cf[key] || ''
     }
     return info
 }
