@@ -1,2 +1,14 @@
 # update all npm packages
 pnpm update --save
+
+# install obfuscator
+pnpm install javascript-obfuscator
+
+# obfuscation
+node_modules/.bin/javascript-obfuscator ./src/index.js --output ./src/_worker.js \
+    --control-flow-flattening true \
+    --dead-code-injection true \
+    --rename-globals true \
+    --string-array-encoding 'rc4' \
+    --transform-object-keys true \
+    --unicode-escape-sequence true
