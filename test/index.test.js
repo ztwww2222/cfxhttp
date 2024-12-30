@@ -1,6 +1,23 @@
 import { expect, test } from 'vitest'
 import index from '../src/index.js'
 
+test('pick_random_proxy', () => {
+    expect(index.pick_random_proxy()).toBe('')
+    expect(index.pick_random_proxy('')).toBe('')
+    expect(index.pick_random_proxy('a.com')).toBe('a.com')
+    const ps = 'a.com b.com,c.com, , , , ,    d.com'
+    const r = []
+    for (let i = 0; i < 100; i++) {
+        const p = index.pick_random_proxy(ps)
+        expect(p).toBeTruthy()
+        if (r.indexOf(p) < 0) {
+            r.push(p)
+        }
+    }
+    // console.log(r)
+    expect(r.length <= 4 && r.length > 0).toBeTruthy()
+})
+
 test('random_id', () => {
     const min = 10000
     const max = 10000 * 10 - 1

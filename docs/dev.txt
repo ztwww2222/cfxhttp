@@ -8,10 +8,7 @@ npm install javascript-obfuscator
 node_modules/.bin/javascript-obfuscator ./src/index.js --output ./src/_worker.js \
     --control-flow-flattening true \
     --dead-code-injection true \
+    --rename-globals true \
     --string-array-encoding 'rc4' \
     --transform-object-keys true \
     --unicode-escape-sequence true
-
-# If you add the following obfuscate-argument, then enviroment varialbes will become invalid.
-	--rename-globals true
-

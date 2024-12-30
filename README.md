@@ -12,15 +12,15 @@
 *如果你不使用 XHTTP 协议，那么只需要步骤 4*
 
 代码顶部有几个配置项：  
- * `UUID` 这个不用解释了吧  
- * `PROXY` 反代 CF 网页的服务器，格式： `example.com`  
- * `LOG_LEVEL` 日志级别，可选值：debug, info, error, none  
- * `TIME_ZONE` 日志时间戳的时区，中国填 `8`  
+ * `UUID` 这个不用解释了吧
+ * `PROXY` （可留空）反代 CF 网页的服务器，逗号分隔，每次随机抽取一个，格式：`a.com, b.com, ...`
+ * `LOG_LEVEL` 日志级别，可选值：`debug`, `info`, `error`, `none`
+ * `TIME_ZONE` 日志时间戳的时区，中国填 `8`
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
  * `XPADDING_RANGE` xhttp 协议回复头中 X-Padding 的长度范围，例如：`100-1000` 或者 `10`，填 `0` 表示关闭这个功能
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `DOH_QUERY_PATH` DoH 服务的访问路径，例如：`/doh-query`，留空表示关闭这个功能
- * `UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS  
+ * `UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS
  * `IP_QUERY_PATH` 查询客户 IP 信息功能的访问路径，例如: `/ip-query/?key=123456`，留空表示关闭这个功能，后面那个 key 相当于密码
 
 这些配置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  

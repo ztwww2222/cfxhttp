@@ -15,9 +15,9 @@ This script is used to deploy vless proxy to Cloudflare workers.
 
 There are some configurations at the top of the source code.  
  * `UUID` Need no explains.
- * `PROXY` (optional) Reverse proxy for websites using Cloudflare CDN. Format: `example.com`  
- * `LOG_LEVEL` debug, info, error, none  
- * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`  
+ * `PROXY` (optional) Reverse proxies for websites using Cloudflare CDN. Random pick one for every connection. Format: `a.com, b.com, ...`
+ * `LOG_LEVEL` debug, info, error, none
+ * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`
  * `XHTTP_PATH` URL path for xhttp transport. e.g. `/xhttp`. Leave it empty to disable this feature.
  * `XPADDING_RANGE` Length range of X-Padding response header. e.g. `100-1000`, `10`, Set to `0` to disable this feature.
  * `WS_PATH` URL path for ws transport. e.g. `/ws`. Leave it empty to disable this feature.

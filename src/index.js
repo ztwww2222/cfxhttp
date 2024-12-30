@@ -1,20 +1,22 @@
 import { connect } from 'cloudflare:sockets'
 
 // configurations
-const UUID = '' // vless UUID
-const PROXY = '' // (optional) reverse proxy for Cloudflare websites. e.g. example.com
-const LOG_LEVEL = 'info' // debug, info, error, none
-const TIME_ZONE = 0 // timestamp time zone of logs
+const SETTINGS = {
+    ['UUID']: '', // vless UUID
+    ['PROXY']: '', // (optional) reverse proxies for Cloudflare websites. e.g. 'a.com, b.com, ...'
+    ['LOG_LEVEL']: 'info', // debug, info, error, none
+    ['TIME_ZONE']: '0', // timestamp time zone of logs
 
-const XHTTP_PATH = '' // URL path for xhttp transport, e.g. '/xhttp', empty means disabled
-const XPADDING_RANGE = '100-1000' // Length range of X-Padding response header
+    ['XHTTP_PATH']: '', // URL path for xhttp transport, e.g. '/xhttp', empty means disabled
+    ['XPADDING_RANGE']: '100-1000', // Length range of X-Padding response header
 
-const WS_PATH = '' // URL path for ws transport, e.g. '/ws', empty means disabled
+    ['WS_PATH']: '', // URL path for ws transport, e.g. '/ws', empty means disabled
 
-const DOH_QUERY_PATH = '' // URL path for DNS over HTTP(S), e.g. '/doh-query', empty means disabled
-const UPSTREAM_DOH = 'https://dns.google/dns-query' // upstream DNS over HTTP(S) server
+    ['DOH_QUERY_PATH']: '', // URL path for DNS over HTTP(S), e.g. '/doh-query', empty means disabled
+    ['UPSTREAM_DOH']: 'https://dns.google/dns-query', // upstream DNS over HTTP(S) server
 
-const IP_QUERY_PATH = '' // URL path for querying client IP information, empty means disabled
+    ['IP_QUERY_PATH']: '', // URL path for querying client IP information, empty means disabled
+}
 
 // source code
 const BUFFER_SIZE = 128 * 1024 // download/upload buffer-size in bytes, must smaller than 1 MiB
@@ -91,8 +93,9 @@ class Logger {
     constructor(log_level, time_zone) {
         this.#id = random_id()
         this.#time_drift = 0
-        if (typeof time_zone === 'number' && time_zone !== 0) {
-            this.#time_drift = time_zone * 60 * 60 * 1000
+        const tz = parseInt(time_zone)
+        if (tz) {
+            this.#time_drift = tz * 60 * 60 * 1000
         }
 
         if (typeof log_level !== 'string') {
@@ -370,6 +373,12 @@ async function connect_remote(log, vless, ...remotes) {
     return await retry()
 }
 
+function pick_random_proxy(proxy) {
+    const arr = (proxy || '').split(/[ ,]+/)
+    const r = arr[Math.floor(Math.random() * arr.length)]
+    return r || ''
+}
+
 async function dial(cfg, log, client_readable) {
     const reader = client_readable.getReader()
     let vless
@@ -382,7 +391,8 @@ async function dial(cfg, log, client_readable) {
         throw new Error(`read vless header error: ${err.message}`)
     }
 
-    const remote = await connect_remote(log, vless, vless.hostname, cfg.PROXY)
+    const proxy = pick_random_proxy(cfg.PROXY)
+    const remote = await connect_remote(log, vless, vless.hostname, proxy)
     return {
         vless,
         remote,
@@ -701,25 +711,11 @@ function handle_json(cfg, url, request) {
     return null
 }
 
-function load_settings(env) {
-    const cfg = {
-        UUID: env.UUID || UUID,
-        PROXY: env.PROXY || PROXY,
-        LOG_LEVEL: env.LOG_LEVEL || LOG_LEVEL,
-        TIME_ZONE: parseInt(env.TIME_ZONE) || TIME_ZONE,
-
-        XHTTP_PATH: env.XHTTP_PATH || XHTTP_PATH,
-        WS_PATH: env.WS_PATH || WS_PATH,
-
-        DOH_QUERY_PATH: env.DOH_QUERY_PATH || DOH_QUERY_PATH,
-        UPSTREAM_DOH: env.UPSTREAM_DOH || UPSTREAM_DOH,
-
-        // do not append slash
-        IP_QUERY_PATH: env.IP_QUERY_PATH || IP_QUERY_PATH,
-
-        XPADDING_RANGE: env.XPADDING_RANGE || XPADDING_RANGE,
+function load_settings(env, settings) {
+    const cfg = {}
+    for (let key in settings) {
+        cfg[key] = env[key] || settings[key]
     }
-
     const features = ['XHTTP_PATH', 'WS_PATH', 'DOH_QUERY_PATH']
     for (let feature of features) {
         cfg[feature] = cfg[feature] && append_slash(cfg[feature])
@@ -728,7 +724,7 @@ function load_settings(env) {
 }
 
 async function main(request, env) {
-    const cfg = load_settings(env)
+    const cfg = load_settings(env, SETTINGS)
     if (!cfg.UUID) {
         return new Response(`Error: UUID is empty`)
     }
@@ -806,6 +802,7 @@ export default {
     concat_typed_arrays,
     get_length,
     parse_uuid,
+    pick_random_proxy,
     random_id,
     random_padding,
     to_size,
