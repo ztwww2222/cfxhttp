@@ -146,7 +146,7 @@ function random_padding(range_str) {
     const range = range_str
         .split('-')
         .map((s) => parseInt(s))
-        .filter((s) => s || s === 0)
+        .filter((n) => n || n === 0)
         .slice(0, 2)
         .sort((a, b) => a - b)
     if (range.length < 1 || range[0] < 1) {
@@ -156,8 +156,8 @@ function random_padding(range_str) {
     if (last < 1) {
         return null
     }
-    const n = range[0] === last ? range[0] : random_num(range[0], last)
-    return '0'.repeat(n)
+    const len = range[0] === last ? range[0] : random_num(range[0], last)
+    return '0'.repeat(len)
 }
 
 function parse_uuid(uuid) {
@@ -374,7 +374,7 @@ async function connect_remote(log, vless, ...remotes) {
 }
 
 function pick_random_proxy(proxy) {
-    const arr = (proxy || '').split(/[ ,]+/)
+    const arr = (proxy || '').split(/[ ,\n\r]+/).filter((s) => s)
     const r = arr[Math.floor(Math.random() * arr.length)]
     return r || ''
 }

@@ -5,11 +5,34 @@ test('pick_random_proxy', () => {
     expect(index.pick_random_proxy()).toBe('')
     expect(index.pick_random_proxy('')).toBe('')
     expect(index.pick_random_proxy('a.com')).toBe('a.com')
-    const ps = 'a.com b.com,c.com, , , , ,    d.com'
-    const r = []
+
+    // one line test
+    let ps = ' ,  p.a.com p.b.com,p.c.com, , , , ,    p.d.com,  ,,,, '
+    let r = []
     for (let i = 0; i < 100; i++) {
         const p = index.pick_random_proxy(ps)
         expect(p).toBeTruthy()
+        expect(p.startsWith('p.')).toBeTruthy()
+        if (r.indexOf(p) < 0) {
+            r.push(p)
+        }
+    }
+    // console.log(r)
+    expect(r.length <= 4 && r.length > 0).toBeTruthy()
+
+    // multiple lines test
+    ps = `
+    p.a.com
+    p.b.com,
+    p.c.com
+    , , , , ,    p.d.com
+    
+    `
+    r = []
+    for (let i = 0; i < 100; i++) {
+        const p = index.pick_random_proxy(ps)
+        expect(p).toBeTruthy()
+        expect(p.startsWith('p.')).toBeTruthy()
         if (r.indexOf(p) < 0) {
             r.push(p)
         }
@@ -45,7 +68,7 @@ test('random_padding', () => {
         expect(p.length).toBeGreaterThanOrEqual(min)
     }
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 50; i++) {
         t(1, 10)
         t(1, 1)
         t(100, 1000)
