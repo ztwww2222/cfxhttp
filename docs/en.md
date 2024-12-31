@@ -18,9 +18,9 @@ There are some configurations at the top of the source code.
  * `PROXY` (optional) Reverse proxies for websites using Cloudflare CDN. Random pick one for every connection. Format: `a.com, b.com, ...`
  * `LOG_LEVEL` debug, info, error, none
  * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`
+ * `WS_PATH` URL path for ws transport. e.g. `/ws`. Leave it empty to disable this feature.
  * `XHTTP_PATH` URL path for xhttp transport. e.g. `/xhttp`. Leave it empty to disable this feature.
  * `XPADDING_RANGE` Length range of X-Padding response header. e.g. `100-1000`, `10`, Set to `0` to disable this feature.
- * `WS_PATH` URL path for ws transport. e.g. `/ws`. Leave it empty to disable this feature.
  * `DOH_QUERY_PATH` URL path for DNS over HTTP(S) feature. e.g. `/doh-query`. Leave it empty to disable this feature.
  * `UPSTREAM_DOH` e.g. `https://dns.google/dns-query`. Do not use Cloudflare DNS.
  * `IP_QUERY_PATH` URL path for querying client IP information feature. e.g. `/ip-query/?key=123456`. Leave it empty to disable this feature. The following `key` parameter is used for authentication.
@@ -28,7 +28,7 @@ There are some configurations at the top of the source code.
 You can setup those configurations in worker's enviroment variables config panel too. Env-vars have higher priority.  
 
 If every thing goes right, you would see a `Hello world!` when accessing `https://sub.your-website.com/`.  
-Visit `https://sub.your-website.com/(XHTTP_PATH)/?uuid=(YOUR-UUID)` to get a `client-config.json` with xhttp transport.  Replace `(XHTTP_PATH)` with `(WS_PATH)` to get a config with ws transport.  
+Visit `https://sub.your-website.com/(WS_PATH)/?fragment=true&uuid=(YOUR-UUID)` to get a `client-config.json` with WebSocket transport.  Replace `(WS_PATH)` with `(XHTTP_PATH)` to get a config with xhttp transport. Set `fragemnt` to `false` to get a config without fragment settings.  
 
 #### Notice
  * This script is slow, do not expect too much.

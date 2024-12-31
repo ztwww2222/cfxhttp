@@ -561,6 +561,23 @@ function create_config(ctype, url, uuid) {
         return null
     }
 
+    if (url.searchParams.get('fragment') === 'true') {
+        config['outbounds'][0]['proxySettings'] = {
+            tag: 'direct',
+            transportLayer: true,
+        }
+        config['outbounds'].push({
+            tag: 'direct',
+            protocol: 'freedom',
+            settings: {
+                fragment: {
+                    packets: 'tlshello',
+                    length: '100-200',
+                    interval: '10-20',
+                },
+            },
+        })
+    }
     stream['network'] = ctype
     return config
 }

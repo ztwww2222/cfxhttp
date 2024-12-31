@@ -16,9 +16,9 @@
  * `PROXY` （可留空）反代 CF 网页的服务器，逗号分隔，每次随机抽取一个，格式：`a.com, b.com, ...`
  * `LOG_LEVEL` 日志级别，可选值：`debug`, `info`, `error`, `none`
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`
+ * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
  * `XPADDING_RANGE` xhttp 协议回复头中 X-Padding 的长度范围，例如：`100-1000` 或者 `10`，填 `0` 表示关闭这个功能
- * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `DOH_QUERY_PATH` DoH 服务的访问路径，例如：`/doh-query`，留空表示关闭这个功能
  * `UPSTREAM_DOH` 上游 DoH 服务器，例如：`https://dns.google/dns-query`，注意不要填 Cloudflare 的 DNS
  * `IP_QUERY_PATH` 查询客户 IP 信息功能的访问路径，例如: `/ip-query/?key=123456`，留空表示关闭这个功能，后面那个 key 相当于密码
@@ -26,7 +26,7 @@
 这些配置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  
 
 一切顺利的话，访问 `https://sub.your-website.com` 会看到 `Hello world!`。  
-访问 `https://sub.your-website.com/(XHTTP_PATH)/?uuid=(YOUR-UUID)` 得到 xhttp 客户端的 `config.json`，把 `(XHTTP_PATH)` 改为 `(WS_PATH)` 得到 ws 的配置。
+访问 `https://sub.your-website.com/(WS_PATH)/?fragment=true&uuid=(YOUR-UUID)` 得到 WebSocket 协议的客户端 `config.json`，把 `(WS_PATH)` 改为 `(XHTTP_PATH)` 得到 xhttp 协议的配置。修改 `fragment=false` 得到关闭分片功能的配置。  
 
 #### 注意事项
  * 网站测速结果是错的，这个脚本很慢，不要有太高的期望
