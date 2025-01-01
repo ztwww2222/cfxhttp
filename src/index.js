@@ -740,14 +740,53 @@ function load_settings(env, settings) {
     return cfg
 }
 
+function random_str(len) {
+    // https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
+    return Array(len)
+        .fill()
+        .map((_) => ((Math.random() * 36) | 0).toString(36))
+        .join('')
+}
+
+function random_uuid() {
+    // https://stackoverflow.com/questions/105034/how-do-i-create-a-guid-uuid
+    const s4 = () =>
+        Math.floor((1 + Math.random()) * 0x10000)
+            .toString(16)
+            .substring(1)
+    return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`
+}
+
+function example(url) {
+    const ws_path = random_str(8)
+    const xhttp_path = random_str(8)
+    const uuid = random_uuid()
+
+    return `Error: UUID is empty
+
+Configuration example:
+UUID ${uuid}
+WS_PATH /${ws_path}
+XHTTP_PATH /${xhttp_path}
+
+WebSocket config.json:
+${url.origin}/${ws_path}/?fragment=true&uuid=${uuid}
+
+XHTTP config.json:
+${url.origin}/${xhttp_path}/?fragment=true&uuid=${uuid}
+
+Press <F5> to refresh this page.`
+}
+
 async function main(request, env) {
     const cfg = load_settings(env, SETTINGS)
+    const url = new URL(request.url)
     if (!cfg.UUID) {
-        return new Response(`Error: UUID is empty`)
+        const text = example(url)
+        return new Response(text)
     }
 
     const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
-    const url = new URL(request.url)
     const path = url.pathname
 
     if (
@@ -756,7 +795,7 @@ async function main(request, env) {
         path.endsWith(cfg.WS_PATH)
     ) {
         const [client, server] = Object.values(new WebSocketPair())
-        // Do not block here. Client is waiting for upgrade-reponse.
+        // Do not block here. Client is waiting for upgrade-response.
         handle_ws(cfg, log, server).catch((err) =>
             log.error(`handle ws client error: ${err}`),
         )
