@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   # At 12:00 AM, only on Friday
   schedule:
-    - cron: '0 0 0 0 5'
+    - cron: '0 18 * * 4'
 
 jobs:
   build:
@@ -18,10 +18,18 @@ jobs:
 
     env:
       projName: cfxhttp
+      actionRunsUrl: 'https://github.com/vrnobody/cfxhttp/actions/runs/'
 
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
+
+      - name: Checkout latest tag
+        run: |
+          git fetch --tags
+          latestTag=$(git describe --tags "$(git rev-list --tags --max-count=1)")
+          git checkout $latestTag
+          echo "TAG=${latestTag}" >> "$GITHUB_ENV"
 
       - name: Setup node.js
         uses: actions/setup-node@v4
@@ -33,12 +41,7 @@ jobs:
 
       - name: Do obfuscate
         run: |
-          git fetch --tags
-          latestTag=$(git describe --tags "$(git rev-list --tags --max-count=1)")
-          git checkout $latestTag
-          echo "obfuscate tag: ${latestTag}"
-          echo "TAG=${latestTag}" >> "$GITHUB_ENV"
-          javascript-obfuscator ./src/index.js --output ./src/_worker.js \
+          ./node_modules/.bin/javascript-obfuscator ./src/index.js --output ./src/_worker.js \
             --control-flow-flattening true \
             --dead-code-injection true \
             --rename-globals true \
@@ -66,16 +69,18 @@ jobs:
           subject-path: "${{ env.projName }}.zip"
 
       - name: Publish Release
-        uses: ncipollo/release-action@v1.14.0
+        uses: softprops/action-gh-release@v2
         with:
           name: "${{ env.DATE }}"
+          tag_name: "${{ env.TAG }}"
           body: |
-            ${{ env.projName }}.zip 是 ${{ env.TAG }} 混淆后的代码
-            SHA256: (${{ env.CHECKSUM }})
+            `${{ env.projName }}.zip` 是 `${{ env.TAG }}` 混淆后的代码
             更新日志：[update-log.md](https://github.com/vrnobody/cfxhttp/blob/main/docs/update-log.md)
+            ActionID: [${{ github.run_id }}](${{ env.actionRunsUrl }}${{ github.run_id }})
+            SHA256: ${{ env.CHECKSUM }}
 
-            这个发布使用 [attestations](https://docs.github.com/zh/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) 来保证混淆后的代码没有夹带私货
-            当然最安全的还是自己使用明文源代码做混淆
+            这个发布使用 [attestations](https://docs.github.com/zh/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) 来保证混淆后的代码没有夹带私货。
+            当然，自己使用明文源代码做混淆更安全。
           draft: false
           prerelease: false
-          artifacts: "${{ env.projName }}.zip"
+          files: "${{ env.projName }}.zip"
