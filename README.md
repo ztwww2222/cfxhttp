@@ -37,6 +37,7 @@
  * ws 协议不支持，也不会支持 early data 功能
  * xhttp 协议只能部署到 workers，不能部署到 pages [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * 使劲薅，免费的资源就会消失，且用且珍惜
+ * 混淆版的代码可以到 [releases](https://github.com/vrnobody/cfxhttp/releases) 下载
 
 #### 感谢（代码抄袭自以下项目）
 [tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH 功能  

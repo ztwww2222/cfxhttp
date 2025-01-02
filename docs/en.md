@@ -39,6 +39,7 @@ Visit `https://sub.your-website.com/(WS_PATH)/?fragment=true&uuid=(YOUR-UUID)` t
  * WebSocket transport does not and would not support early data feature
  * The xhttp transport can only deploy to Cloudflare workers. [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * The more people knows of this script, the sooner this script got banned.
+ * You can download obfuscated code in [releases](https://github.com/vrnobody/cfxhttp/releases)
 
 #### Credits
 [tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH feature  

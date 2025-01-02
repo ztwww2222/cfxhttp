@@ -1,0 +1,81 @@
+name: obfuscate
+
+on:
+  # Trigger manually
+  workflow_dispatch:
+  # At 12:00 AM, only on Friday
+  schedule:
+    - cron: '0 0 0 0 5'
+
+jobs:
+  build:
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+
+    runs-on: ubuntu-latest
+
+    env:
+      projName: cfxhttp
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Setup node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install obfuscator
+        run: npm install javascript-obfuscator
+
+      - name: Do obfuscate
+        run: |
+          git fetch --tags
+          latestTag=$(git describe --tags "$(git rev-list --tags --max-count=1)")
+          git checkout $latestTag
+          echo "obfuscate tag: ${latestTag}"
+          echo "TAG=${latestTag}" >> "$GITHUB_ENV"
+          javascript-obfuscator ./src/index.js --output ./src/_worker.js \
+            --control-flow-flattening true \
+            --dead-code-injection true \
+            --rename-globals true \
+            --string-array-encoding 'rc4' \
+            --transform-object-keys true \
+            --unicode-escape-sequence true
+
+      - name: Create assets
+        uses: vimtor/action-zip@v1.2
+        with:
+          files: ./src/_worker.js
+          dest: ${{ env.projName }}.zip
+
+      - name: Calc sha256sum
+        run: |
+          echo DATE="$(date +'%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
+          pkg="${projName}.zip"
+          hash="$(sha256sum ${pkg} | awk '{ print $1 }')"
+          echo CHECKSUM="${hash}" >> "$GITHUB_ENV"
+          echo "${pkg} sha256: ${hash}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "${{ env.projName }}.zip"
+
+      - name: Publish Release
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          name: "${{ env.DATE }}"
+          body: |
+            ${{ env.projName }}.zip 是 ${{ env.TAG }} 混淆后的代码
+            SHA256: (${{ env.CHECKSUM }})
+            更新日志：[update-log.md](https://github.com/vrnobody/cfxhttp/blob/main/docs/update-log.md)
+
+            这个发布使用 [attestations](https://docs.github.com/zh/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) 来保证混淆后的代码没有夹带私货
+            当然最安全的还是自己使用明文源代码做混淆
+          draft: false
+          prerelease: false
+          artifacts: "${{ env.projName }}.zip"

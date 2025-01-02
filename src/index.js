@@ -775,7 +775,7 @@ ${url.origin}/${ws_path}/?fragment=true&uuid=${uuid}
 XHTTP config.json:
 ${url.origin}/${xhttp_path}/?fragment=true&uuid=${uuid}
 
-Press <F5> to refresh this page.`
+Refresh this page to re-generate random configuration example.`
 }
 
 async function main(request, env) {
