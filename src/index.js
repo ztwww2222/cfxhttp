@@ -445,7 +445,7 @@ async function handle_xhttp(cfg, log, client_readable) {
     return downloader.readable
 }
 
-function create_ws_client_readable(log, client_ws_server) {
+function create_client_ws_readable(log, client_ws_server) {
     return new ReadableStream(
         {
             start(controller) {
@@ -502,7 +502,7 @@ function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
 
 async function handle_ws(cfg, log, client_ws_server) {
     client_ws_server.accept()
-    const client_readable = create_ws_client_readable(log, client_ws_server)
+    const client_readable = create_client_ws_readable(log, client_ws_server)
     const { vless, remote } = await dial(cfg, log, client_readable)
     const uploader = create_uploader(log, vless, remote.writable)
     const downloader = create_ws_downloader(
@@ -764,7 +764,7 @@ function example(url) {
 
     return `Error: UUID is empty
 
-Configuration example:
+Settings example:
 UUID ${uuid}
 WS_PATH /${ws_path}
 XHTTP_PATH /${xhttp_path}
@@ -775,7 +775,7 @@ ${url.origin}/${ws_path}/?fragment=true&uuid=${uuid}
 XHTTP config.json:
 ${url.origin}/${xhttp_path}/?fragment=true&uuid=${uuid}
 
-Refresh this page to re-generate random configuration example.`
+Refresh this page to re-generate a random settings example.`
 }
 
 async function main(request, env) {
