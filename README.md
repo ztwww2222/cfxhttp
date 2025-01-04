@@ -1,27 +1,35 @@
 简体中文 | [English](./docs/en.md)  
 
-在 Cloudflare workers 中部署 vless 协议的代理服务器。  
+在 Cloudflare workers 或者 pages 中部署 vless 协议的代理服务器。  
 
-#### 使用方法
+#### 在 pages 中部署 ws 代理
+ 1. 下载 [releases](https://github.com/vrnobody/cfxhttp/releases) 中的 cfxhttp.zip，上传到 pages
+ 2. 在设置面板中添加环境变量： `UUID` 和 `WS_PATH`
+
+一切顺利的话，访问（可能要挂代理） `https://your-project-name.pages.dev` 会看到 `Hello world!`。  
+访问 `https://your-project-name.pages.dev/(WS_PATH)/?fragment=true&uuid=(UUID)` 得到 WebSocket 协议的客户端 `config.json`
+
+#### 在 workers 中部署 ws 代理
+ 1. 把 [src/index.js](./src/index.js) 里面的代码复制到 workers 的代码编辑器中
+ 2. 在设置面板中添加环境变量： `UUID` 和 `WS_PATH`
+
+其他和 pages 类似。  
+
+#### 在 workers 中部署 xhttp 代理
  1. 前置要求，拥有一个由 CF 托管的一级域名
  1. 在 CF 控制面板的 `网络` 配置中启用 `gRPC` 功能
  1. 在 DNS 配置中添加一个二级域名的 A 记录，随便填个 IPv4 地址，开启小黄云
  1. 新建一个 workers 把 [src/index.js](./src/index.js) 里面的代码复制进去
- 1. 在 workers 的配置页面添加路由，指向上面新加的二级域名，例如: `sub.your-website.com/*`
+ 1. 在 workers 的配置页面添加路由，指向上面新加的二级域名，例如: `sub-domain.your-website.com/*`
+ 1. 在设置面板中添加环境变量： `UUID` 和 `XHTTP_PATH`
 
-*如果不使用 XHTTP 协议，那么只需要步骤 4*
+访问 `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUID)` 得到 xhttp 协议的客户端 `config.json`  
 
-#### 基础设置
+#### 各设置项说明
  * `UUID` 这个不用解释了吧
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
- * `PROXY` （可选）反代 CF 网页的服务器，逗号分隔，每次随机抽取一个，格式：`a.com, b.com, ...`
-
-这些设置项也可以在 workers 的环境变量界面中配置。环境变量的优先级更高。  
-一切顺利的话，访问 `https://sub.your-website.com` 会看到 `Hello world!`。  
-访问 `https://sub.your-website.com/(WS_PATH)/?fragment=true&uuid=(YOUR-UUID)` 得到 WebSocket 协议的客户端 `config.json`，把 `(WS_PATH)` 改为 `(XHTTP_PATH)` 得到 xhttp 协议的配置。修改 `fragment=false` 得到关闭分片功能的配置。  
- 
-#### 扩展设置
+ * `PROXY` （可选）反代 CF 网页的服务器，逗号分隔，每次随机抽取一个，格式：`a.com, b.com, ...` 
  * `LOG_LEVEL` 日志级别，可选值：`debug`, `info`, `error`, `none`
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`
  * `XPADDING_RANGE` xhttp 协议回复头中 X-Padding 的长度范围，例如：`100-1000` 或者 `10`，填 `0` 表示关闭这个功能
@@ -38,7 +46,6 @@
  * ws 协议不支持，也不会支持 early data 功能
  * xhttp 协议只能部署到 workers，不能部署到 pages [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)
  * 使劲薅，免费的资源就会消失，且用且珍惜
- * 混淆版的代码可以到 [releases](https://github.com/vrnobody/cfxhttp/releases) 下载
 
 #### 感谢（代码抄袭自以下项目）
 [tina-hello/doh-cf-workers](https://github.com/tina-hello/doh-cf-workers/) DoH 功能  
