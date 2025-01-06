@@ -27,7 +27,7 @@ jobs:
 
       - name: Checkout latest tag
         run: |
-          git fetch --tags
+          git fetch --tags --force
           latestTag=$(git describe --tags "$(git rev-list --tags --max-count=1)")
           git checkout $latestTag
           echo "TAG=${latestTag}" >> "$GITHUB_ENV"
