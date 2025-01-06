@@ -5,31 +5,31 @@ Please help me improve this document.
 This script is used to deploy vless proxy to Cloudflare workers or pages.
 
 #### Deploy WebSocket proxy to pages
- 1. download cfxhttp.zip from [releases](https://github.com/vrnobody/cfxhttp/releases), and upload to pages
- 2. add enviroment variables `UUID` and `WS_PATH`
+ 1. Download cfxhttp.zip from [releases](https://github.com/vrnobody/cfxhttp/releases), and upload to pages
+ 2. Add enviroment variables `UUID` and `WS_PATH`
 
 If every thing goes right, you would see a `Hello world!` when accessing `https://your-project-name.pages.dev`.  
 Visit `https://your-project-name.pages.dev/(WS_PATH)/?fragment=true&uuid=(UUID)` to get a client `config.json` with WebSocket transport.  
 Set `fragemnt` to `false` to get a config without fragment settings.  
 
 #### Deploy WebSocket proxy to workers
- 1. copy source code from [src/index.js](./src/index.js) to workers' code editor
- 2. add enviroment variables `UUID` and `WS_PATH`
+ 1. Copy source code from [src/index.js](./src/index.js) into workers' code editor
+ 2. Add enviroment variables `UUID` and `WS_PATH`
 
-Others are similar to pages.  
+The rest is similar to pages.  
 
 #### Deploy xhttp proxy to workers
  1. Pre-requirment: have a domain managed by Cloudflare.
  2. Enable `gRPC` feature in `network` settings in Cloudflare dashboard.
  3. Create a DNS `A record` for a new sub-domain with a random IPv4 address. Enable `proxy` option.
  4. Create a worker and copy-and-paste the source code from [src/index.js](../src/index.js).
- 5. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub.your-website.com/*`.
- 6. add enviroment variables `UUID` and `WS_PATH`
+ 5. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub-domain.your-website.com/*`.
+ 6. Add enviroment variables `UUID` and `WS_PATH`
 
 Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUID)` to get a client `config.json` with xhttp transport.  
-*The xhttp transport can not deploy to Cloudflare pages. See also [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)*  
+*The xhttp transport can not deploy to Cloudflare pages. [Issue #2](https://github.com/vrnobody/cfxhttp/issues/2)*  
 
-#### Setting details
+#### Settings detail
  * `UUID` Need no explains.
  * `PROXY` (optional) Reverse proxies for websites using Cloudflare CDN. Randomly pick one for every connection. Format: `a.com, b.com, ...`
  * `WS_PATH` URL path for ws transport. e.g. `/ws`. Leave it empty to disable this feature.
@@ -46,8 +46,8 @@ Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUI
  * Workers and pages do not support UDP. Applications require UDP feature will not work. Such as DNS.
  * Workers and pages have CPU executing-time limit. Applications require long-term connection would disconnect randomly. Such as downloading a big file.
  * DoH feature is not for xray-core, use DNS over TCP in `config.json` instead. e.g. `tcp://8.8.8.8:53`  
- * Enable one of ws transport or xhttp transport as needed. It's a bit wasteful to enable both.
  * WebSocket transport does not and would not support early data feature.
+ * Enable one of ws transport or xhttp transport as needed. It's a bit wasteful to enable both.
  * The more people knows of this script, the sooner this script got banned.
 
 #### Credits
