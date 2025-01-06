@@ -1,10 +1,12 @@
 name: obfuscate
 
 on:
-  # Trigger manually
-  workflow_dispatch:
+  push:
+    tags:
+      - '**'  # Push events to every tag including hierarchical tags like v1.0/beta
   schedule:
-    - cron: '0 18 * * 4'
+    - cron: '0 0 * * 5' # every friday UTC
+  workflow_dispatch: # Trigger manually
 
 jobs:
   build:
@@ -70,7 +72,7 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "${{ env.DATE }}"
+          name: "${{ env.TAG }} ${{ env.DATE }}"
           tag_name: "${{ env.TAG }}"
           body: |
             `${{ env.projName }}.zip` 是 `${{ env.TAG }}` 混淆后的代码
