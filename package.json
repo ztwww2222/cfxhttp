@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
+    "debug": "wrangler --log-level debug dev",
     "dev": "wrangler dev",
     "test": "vitest"
   },

@@ -4,7 +4,7 @@ import { connect } from 'cloudflare:sockets'
 const SETTINGS = {
     ['UUID']: '', // vless UUID
     ['PROXY']: '', // (optional) reverse proxies for Cloudflare websites. e.g. 'a.com, b.com, ...'
-    ['LOG_LEVEL']: 'info', // debug, info, error, none
+    ['LOG_LEVEL']: 'none', // debug, info, error, none
     ['TIME_ZONE']: '0', // timestamp time zone of logs
 
     ['XHTTP_PATH']: '', // URL path for xhttp transport, e.g. '/xhttp', empty means disabled
@@ -30,21 +30,6 @@ function get_length(o) {
     return (o && (o.byteLength || o.length)) || 0
 }
 
-function to_size(size) {
-    const KiB = 1024
-    const min = 1.1 * KiB
-    const SIZE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
-    let i = 0
-    for (; i < SIZE_UNITS.length - 1; i++) {
-        if (Math.abs(size) < min) {
-            break
-        }
-        size = size / KiB
-    }
-    const f = size > 0 ? Math.floor : Math.ceil
-    return `${f(size)} ${SIZE_UNITS[i]}`
-}
-
 function validate_uuid(left, right) {
     for (let i = 0; i < 16; i++) {
         if (left[i] !== right[i]) {
@@ -52,22 +37,6 @@ function validate_uuid(left, right) {
         }
     }
     return true
-}
-
-class Counter {
-    #total
-
-    constructor() {
-        this.#total = 0
-    }
-
-    get() {
-        return this.#total
-    }
-
-    add(size) {
-        this.#total += size
-    }
 }
 
 function concat_typed_arrays(first, ...args) {
@@ -267,22 +236,14 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 }
 
-async function upload_to_remote(log, counter, remote_writer, vless) {
-    async function inner_upload(d) {
-        const len = get_length(d)
-        counter.add(len)
-        await remote_writer.write(d)
-
-        // performance impact
-        // log.debug(`upload: ${to_size(len)}`)
+async function upload_to_remote(remote_writer, vless) {
+    if (get_length(vless.data) > 0) {
+        await remote_writer.write(vless.data)
     }
-
-    log.debug(`upload first packet`)
-    await inner_upload(vless.data)
     while (vless.more) {
         const r = await vless.reader.read()
         if (r.value) {
-            await inner_upload(r.value)
+            await remote_writer.write(r.value)
         }
         if (r.done) {
             break
@@ -291,24 +252,20 @@ async function upload_to_remote(log, counter, remote_writer, vless) {
 }
 
 function create_uploader(log, vless, remote_writable) {
-    const counter = new Counter()
     const done = new Promise((resolve, reject) => {
         const remote_writer = remote_writable.getWriter()
-        upload_to_remote(log, counter, remote_writer, vless)
+        upload_to_remote(remote_writer, vless)
             .catch(reject)
             .finally(() => remote_writer.close())
             .catch((err) => log.debug(`close upload writer error: ${err}`))
             .finally(resolve)
     })
-
     return {
-        counter,
         done,
     }
 }
 
 function create_xhttp_downloader(log, vless, remote_readable) {
-    const counter = new Counter()
     let download_buffer_stream
 
     const done = new Promise((resolve, reject) => {
@@ -316,16 +273,10 @@ function create_xhttp_downloader(log, vless, remote_readable) {
             {
                 start(controller) {
                     log.debug(`download vless response`)
-                    counter.add(get_length(vless.resp))
                     controller.enqueue(vless.resp)
                 },
                 transform(chunk, controller) {
-                    const len = get_length(chunk)
-                    counter.add(len)
                     controller.enqueue(chunk)
-
-                    // performance impact
-                    // log.debug(`download: ${to_size(len)}`)
                 },
                 cancel(reason) {
                     reject(reason)
@@ -342,41 +293,38 @@ function create_xhttp_downloader(log, vless, remote_readable) {
 
     return {
         readable: download_buffer_stream.readable,
-        counter,
         done,
     }
 }
 
-async function connect_remote(log, vless, ...remotes) {
-    const hostname = remotes.shift()
-    if (!hostname || hostname.length < 1) {
-        throw new Error('all attempts failed')
+function pick_random_proxy(cfg_proxy) {
+    if (!cfg_proxy || typeof cfg_proxy !== 'string') {
+        return ''
     }
-
-    if (vless.hostname === hostname) {
-        log.info(`direct connect [${vless.hostname}]:${vless.port}`)
-    } else {
-        log.info(
-            `proxy [${vless.hostname}]:${vless.port} through [${hostname}]`,
-        )
-    }
-
-    const retry = () => connect_remote(log, vless, ...remotes)
-    try {
-        const remote = connect({ hostname: hostname, port: vless.port })
-        const info = await remote.opened
-        log.debug(`connection opened:`, info.remoteAddress)
-        return remote
-    } catch (err) {
-        log.error(`retry [${vless.hostname}] reason: ${err}`)
-    }
-    return await retry()
-}
-
-function pick_random_proxy(proxy) {
-    const arr = (proxy || '').split(/[ ,\n\r]+/).filter((s) => s)
+    const arr = cfg_proxy.split(/[ ,\n\r]+/).filter((s) => s)
     const r = arr[Math.floor(Math.random() * arr.length)]
     return r || ''
+}
+
+async function connect_remote(log, hostname, port, cfg_proxy) {
+    try {
+        log.info(`direct connect [${hostname}]:${port}`)
+        const conn = connect({ hostname, port })
+        const info = await conn.opened
+        log.debug(`connection opened:`, info.remoteAddress)
+        return conn
+    } catch {}
+
+    const proxy = pick_random_proxy(cfg_proxy)
+    if (proxy) {
+        log.info(`proxy [${hostname}]:${port} through [${proxy}]`)
+        const conn = connect({ hostname: proxy, port })
+        const info = await conn.opened
+        log.debug(`connection opened:`, info.remoteAddress)
+        return conn
+    }
+
+    throw new Error('all attempts failed')
 }
 
 async function dial(cfg, log, client_readable) {
@@ -391,8 +339,12 @@ async function dial(cfg, log, client_readable) {
         throw new Error(`read vless header error: ${err.message}`)
     }
 
-    const proxy = pick_random_proxy(cfg.PROXY)
-    const remote = await connect_remote(log, vless, vless.hostname, proxy)
+    const remote = await connect_remote(
+        log,
+        vless.hostname,
+        vless.port,
+        cfg.PROXY,
+    )
     return {
         vless,
         remote,
@@ -423,12 +375,6 @@ async function read_atleast(reader, n) {
     }
 }
 
-function format_total(upload_counter, download_counter) {
-    const upload_total = to_size(upload_counter.get())
-    const download_total = to_size(download_counter.get())
-    return `upload total: ${upload_total}, download total: ${download_total}`
-}
-
 async function handle_xhttp(cfg, log, client_readable) {
     const { vless, remote } = await dial(cfg, log, client_readable)
     const uploader = create_uploader(log, vless, remote.writable)
@@ -438,9 +384,7 @@ async function handle_xhttp(cfg, log, client_readable) {
         .catch((err) => log.error(`xhttp download error: ${err}`))
         .finally(() => uploader.done)
         .catch((err) => log.debug(`xhttp upload error: ${err}`))
-        .finally(() =>
-            log.info(format_total(uploader.counter, downloader.counter)),
-        )
+        .finally(() => log.info('connection closed'))
 
     return downloader.readable
 }
@@ -468,16 +412,10 @@ function create_client_ws_readable(log, client_ws_server) {
 }
 
 function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
-    const counter = new Counter()
     const done = new Promise((resolve, reject) => {
         const writable = new WritableStream({
             write(chunk) {
-                const len = get_length(chunk)
-                counter.add(len)
                 client_ws_server.send(chunk)
-
-                // performance impact
-                // log.debug(`download: ${to_size(len)}`)
             },
             abort(reason) {
                 log.error(`ws download error: ${reason}`)
@@ -495,7 +433,6 @@ function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
     })
 
     return {
-        counter,
         done,
     }
 }
@@ -522,7 +459,7 @@ async function handle_ws(cfg, log, client_ws_server) {
             } catch (err) {
                 log.error(`close ws client error: ${err}`)
             }
-            log.info(format_total(uploader.counter, downloader.counter))
+            log.info('connection closed')
         })
 }
 
@@ -861,6 +798,5 @@ export default {
     pick_random_proxy,
     random_id,
     random_padding,
-    to_size,
     validate_uuid,
 }
