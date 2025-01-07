@@ -40,6 +40,10 @@ function validate_uuid(left, right) {
 }
 
 function concat_typed_arrays(first, ...args) {
+    if (!args || args.length < 1) {
+        return first
+    }
+
     let len = first.length
     for (let a of args) {
         len += a.length
@@ -108,6 +112,23 @@ function random_id() {
     return random_num(min, max)
 }
 
+function random_str(len) {
+    // https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
+    return Array(len)
+        .fill()
+        .map((_) => ((Math.random() * 36) | 0).toString(36))
+        .join('')
+}
+
+function random_uuid() {
+    // https://stackoverflow.com/questions/105034/how-do-i-create-a-guid-uuid
+    const s4 = () =>
+        Math.floor((1 + Math.random()) * 0x10000)
+            .toString(16)
+            .substring(1)
+    return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`
+}
+
 function random_padding(range_str) {
     if (!range_str || typeof range_str !== 'string') {
         return null
@@ -140,99 +161,87 @@ function parse_uuid(uuid) {
 }
 
 async function read_vless_header(reader, cfg_uuid_str) {
-    let r = await read_atleast(reader, 1 + 16 + 1)
-    let rlen = r.value.length
-    let idx = 0
-    let cache = r.value
+    let buff = await read_atleast(reader, 1 + 16 + 1)
+    let readed_len = buff.value.length
+    let header = buff.value
 
-    const version = cache[0]
-    const uuid = cache.slice(1, 1 + 16)
+    async function read_until(offset) {
+        if (buff.done) {
+            throw new Error('header length too short')
+        }
+        const len = offset - readed_len
+        if (len < 1) {
+            return
+        }
+        buff = await read_atleast(reader, len)
+        readed_len += buff.value.length
+        header = concat_typed_arrays(header, buff.value)
+    }
+
+    const version = header[0]
+    const uuid = header.slice(1, 1 + 16)
     const cfg_uuid = parse_uuid(cfg_uuid_str)
     if (!validate_uuid(uuid, cfg_uuid)) {
         throw new Error(`invalid UUID`)
     }
-    const pb_len = cache[1 + 16]
+    const pb_len = header[1 + 16]
     const addr_plus1 = 1 + 16 + 1 + pb_len + 1 + 2 + 1
+    await read_until(addr_plus1 + 1)
 
-    if (addr_plus1 + 1 > rlen) {
-        if (r.done) {
-            throw new Error(`header too short`)
-        }
-        idx = addr_plus1 + 1 - rlen
-        r = await read_atleast(reader, idx)
-        rlen += r.value.length
-        cache = concat_typed_arrays(cache, r.value)
-    }
-
-    const cmd = cache[1 + 16 + 1 + pb_len]
-    if (cmd !== 1) {
+    const cmd = header[1 + 16 + 1 + pb_len]
+    const COMMAND_TYPE_TCP = 1
+    if (cmd !== COMMAND_TYPE_TCP) {
         throw new Error(`unsupported command: ${cmd}`)
     }
-    const port = (cache[addr_plus1 - 1 - 2] << 8) + cache[addr_plus1 - 1 - 1]
-    const atype = cache[addr_plus1 - 1]
+
+    const port = (header[addr_plus1 - 1 - 2] << 8) + header[addr_plus1 - 1 - 1]
+    const atype = header[addr_plus1 - 1]
 
     const ADDRESS_TYPE_IPV4 = 1
-    const ADDRESS_TYPE_URL = 2
+    const ADDRESS_TYPE_STRING = 2
     const ADDRESS_TYPE_IPV6 = 3
     let header_len = -1
     if (atype === ADDRESS_TYPE_IPV4) {
         header_len = addr_plus1 + 4
     } else if (atype === ADDRESS_TYPE_IPV6) {
         header_len = addr_plus1 + 16
-    } else if (atype === ADDRESS_TYPE_URL) {
-        header_len = addr_plus1 + 1 + cache[addr_plus1]
+    } else if (atype === ADDRESS_TYPE_STRING) {
+        header_len = addr_plus1 + 1 + header[addr_plus1]
     }
-
     if (header_len < 0) {
         throw new Error('read address type failed')
     }
+    await read_until(header_len)
 
-    idx = header_len - rlen
-    if (idx > 0) {
-        if (r.done) {
-            throw new Error(`read address failed`)
-        }
-        r = await read_atleast(reader, idx)
-        rlen += r.value.length
-        cache = concat_typed_arrays(cache, r.value)
-    }
-
+    const idx = addr_plus1
     let hostname = ''
-    idx = addr_plus1
-    switch (atype) {
-        case ADDRESS_TYPE_IPV4:
-            hostname = cache.slice(idx, idx + 4).join('.')
-            break
-        case ADDRESS_TYPE_URL:
-            hostname = new TextDecoder().decode(
-                cache.slice(idx + 1, idx + 1 + cache[idx]),
+    if (atype === ADDRESS_TYPE_IPV4) {
+        hostname = header.slice(idx, idx + 4).join('.')
+    } else if (atype === ADDRESS_TYPE_STRING) {
+        hostname = new TextDecoder().decode(
+            header.slice(idx + 1, idx + 1 + header[idx]),
+        )
+    } else if (atype === ADDRESS_TYPE_IPV6) {
+        hostname = header
+            .slice(idx, idx + 16)
+            .reduce(
+                (s, b2, i2, a) =>
+                    i2 % 2 ? s.concat(((a[i2 - 1] << 8) + b2).toString(16)) : s,
+                [],
             )
-            break
-        case ADDRESS_TYPE_IPV6:
-            hostname = cache
-                .slice(idx, idx + 16)
-                .reduce(
-                    (s, b2, i2, a) =>
-                        i2 % 2
-                            ? s.concat(((a[i2 - 1] << 8) + b2).toString(16))
-                            : s,
-                    [],
-                )
-                .join(':')
-            break
+            .join(':')
     }
-
-    if (hostname.length < 1) {
+    if (!hostname) {
         throw new Error('parse hostname failed')
     }
 
     return {
         hostname,
         port,
-        data: cache.slice(header_len),
+        data: header.slice(header_len),
         resp: new Uint8Array([version, 0]),
         reader,
-        more: !r.done,
+        more: !buff.done,
     }
 }
 
@@ -265,14 +274,13 @@ function create_uploader(log, vless, remote_writable) {
     }
 }
 
-function create_xhttp_downloader(log, vless, remote_readable) {
+function create_xhttp_downloader(vless, remote_readable) {
     let download_buffer_stream
 
     const done = new Promise((resolve, reject) => {
         download_buffer_stream = new TransformStream(
             {
                 start(controller) {
-                    log.debug(`download vless response`)
                     controller.enqueue(vless.resp)
                 },
                 transform(chunk, controller) {
@@ -282,7 +290,7 @@ function create_xhttp_downloader(log, vless, remote_readable) {
                     reject(reason)
                 },
             },
-            null,
+            new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
             new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
         )
         remote_readable
@@ -378,7 +386,7 @@ async function read_atleast(reader, n) {
 async function handle_xhttp(cfg, log, client_readable) {
     const { vless, remote } = await dial(cfg, log, client_readable)
     const uploader = create_uploader(log, vless, remote.writable)
-    const downloader = create_xhttp_downloader(log, vless, remote.readable)
+    const downloader = create_xhttp_downloader(vless, remote.readable)
 
     downloader.done
         .catch((err) => log.error(`xhttp download error: ${err}`))
@@ -412,21 +420,25 @@ function create_client_ws_readable(log, client_ws_server) {
 }
 
 function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
-    const done = new Promise((resolve, reject) => {
-        const writable = new WritableStream({
+    const client_ws_writable = new WritableStream(
+        {
             write(chunk) {
                 client_ws_server.send(chunk)
             },
             abort(reason) {
                 log.error(`ws download error: ${reason}`)
             },
-        })
-        const writer = writable.getWriter()
-        writer
+        },
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+    )
+    const client_ws_writer = client_ws_writable.getWriter()
+
+    const done = new Promise((resolve, reject) => {
+        client_ws_writer
             .write(vless.resp)
             .then(() => {
-                writer.releaseLock()
-                return remote_readable.pipeTo(writable)
+                client_ws_writer.releaseLock()
+                return remote_readable.pipeTo(client_ws_writable)
             })
             .then(resolve)
             .catch(reject)
@@ -482,6 +494,7 @@ function create_config(ctype, url, uuid) {
 
     const path = append_slash(url.pathname)
     if (ctype === 'ws') {
+        delete stream['tlsSettings']['alpn']
         stream['wsSettings'] = {
             path,
             host,
@@ -675,23 +688,6 @@ function load_settings(env, settings) {
         cfg[feature] = cfg[feature] && append_slash(cfg[feature])
     }
     return cfg
-}
-
-function random_str(len) {
-    // https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
-    return Array(len)
-        .fill()
-        .map((_) => ((Math.random() * 36) | 0).toString(36))
-        .join('')
-}
-
-function random_uuid() {
-    // https://stackoverflow.com/questions/105034/how-do-i-create-a-guid-uuid
-    const s4 = () =>
-        Math.floor((1 + Math.random()) * 0x10000)
-            .toString(16)
-            .substring(1)
-    return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`
 }
 
 function example(url) {

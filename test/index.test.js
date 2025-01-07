@@ -83,7 +83,7 @@ test('random_padding', () => {
     expect(len >= 3 && len <= 5).toBeTruthy()
 })
 
-test('get length', () => {
+test('get_length', () => {
     function t(o, n) {
         const r = index.get_length(o)
         expect(r).toBe(n)
@@ -102,14 +102,16 @@ test('get length', () => {
     t(1234, 0)
 })
 
-test('concat typed arrays', () => {
+test('concat_typed_arrays', () => {
     let a = new Uint8Array([])
     let r = index.concat_typed_arrays(a)
+    expect(a === r).toBeTruthy()
     expect(r.length).toBe(0)
 
     a = new Uint8Array([1, 2])
     let b = new Uint8Array([3, 4, 5])
     r = index.concat_typed_arrays(a, b)
+    expect(a === r).toBeFalsy()
     expect(r.length).toBe(2 + 3)
     expect(r[1]).toBe(2)
     expect(r[4]).toBe(5)
@@ -128,7 +130,7 @@ test('concat typed arrays', () => {
     expect(r[4]).toBe(3)
 })
 
-test('parse uuid test', () => {
+test('parse_uuid_test', () => {
     const uuid = '81c11ae9-28f3-4439-8812-d8dbf0904eae'
     const exps = [
         129, 193, 26, 233, 40, 243, 68, 57, 136, 18, 216, 219, 240, 144, 78,
@@ -142,7 +144,7 @@ test('parse uuid test', () => {
     }
 })
 
-test('validate uuid test', () => {
+test('validate_uuid_test', () => {
     const s = '81c11ae9-28f3-4439-8812-d8dbf0904eae'
     const uuid = index.parse_uuid(s)
     const chunk = [

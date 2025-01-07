@@ -7,8 +7,8 @@
  2. 在设置面板中添加环境变量： `UUID` 和 `WS_PATH`
 
 一切顺利的话，访问（可能要挂代理） `https://your-project-name.pages.dev` 会看到 `Hello world!`。  
-访问 `https://your-project-name.pages.dev/(WS_PATH)/?fragment=true&uuid=(UUID)` 获取 WebSocket 协议的客户端 `config.json`  
-把 URL 中的 `fragment` 设置为 `false` 获取关闭分片功能的配置。  
+访问 `https://your-project-name.pages.dev/(WS_PATH)/?fragment=true&uuid=(UUID)`  
+获取 WebSocket 协议的客户端 `config.json`。把 `fragment` 设置为 `false` 获取关闭分片功能的配置。  
 
 #### 在 workers 中部署 ws 代理
  1. 把 [src/index.js](./src/index.js) 里面的代码复制到 workers 的代码编辑器中
