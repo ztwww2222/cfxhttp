@@ -59,46 +59,46 @@ function concat_typed_arrays(first, ...args) {
 }
 
 class Logger {
-    #id
-    #level
-    #time_drift
+    inner_id
+    inner_level
+    inner_time_drift
 
     constructor(log_level, time_zone) {
-        this.#id = random_id()
-        this.#time_drift = 0
+        this.inner_id = random_id()
+        this.inner_time_drift = 0
         const tz = parseInt(time_zone)
         if (tz) {
-            this.#time_drift = tz * 60 * 60 * 1000
+            this.inner_time_drift = tz * 60 * 60 * 1000
         }
 
         if (typeof log_level !== 'string') {
             log_level = 'info'
         }
         const levels = ['debug', 'info', 'error', 'none']
-        this.#level = levels.indexOf(log_level.toLowerCase())
+        this.inner_level = levels.indexOf(log_level.toLowerCase())
     }
 
     debug(...args) {
-        if (this.#level < 1) {
-            this.#log(`[debug]`, ...args)
+        if (this.inner_level < 1) {
+            this.inner_log(`[debug]`, ...args)
         }
     }
 
     info(...args) {
-        if (this.#level < 2) {
-            this.#log(`[info ]`, ...args)
+        if (this.inner_level < 2) {
+            this.inner_log(`[info ]`, ...args)
         }
     }
 
     error(...args) {
-        if (this.#level < 3) {
-            this.#log(`[error]`, ...args)
+        if (this.inner_level < 3) {
+            this.inner_log(`[error]`, ...args)
         }
     }
 
-    #log(prefix, ...args) {
-        const now = new Date(Date.now() + this.#time_drift).toISOString()
-        console.log(now, prefix, `(${this.#id})`, ...args)
+    inner_log(prefix, ...args) {
+        const now = new Date(Date.now() + this.inner_time_drift).toISOString()
+        console.log(now, prefix, `(${this.inner_id})`, ...args)
     }
 }
 
@@ -258,49 +258,34 @@ async function upload_to_remote(remote_writer, vless) {
             break
         }
     }
+    await remote_writer.close()
 }
 
-function create_uploader(log, vless, remote_writable) {
+function create_uploader(vless, remote_writable) {
+    const remote_writer = remote_writable.getWriter()
     const done = new Promise((resolve, reject) => {
-        const remote_writer = remote_writable.getWriter()
-        upload_to_remote(remote_writer, vless)
-            .catch(reject)
-            .finally(() => remote_writer.close())
-            .catch((err) => log.debug(`close upload writer error: ${err}`))
-            .finally(resolve)
+        upload_to_remote(remote_writer, vless).catch(reject).finally(resolve)
     })
     return {
         done,
     }
 }
 
-function create_xhttp_downloader(vless, remote_readable) {
-    let download_buffer_stream
+function create_downloader(vless, client_writable, remote_readable) {
+    const client_writer = client_writable.getWriter()
 
     const done = new Promise((resolve, reject) => {
-        download_buffer_stream = new TransformStream(
-            {
-                start(controller) {
-                    controller.enqueue(vless.resp)
-                },
-                transform(chunk, controller) {
-                    controller.enqueue(chunk)
-                },
-                cancel(reason) {
-                    reject(reason)
-                },
-            },
-            new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-            new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-        )
-        remote_readable
-            .pipeTo(download_buffer_stream.writable)
+        client_writer
+            .write(vless.resp)
+            .then(() => {
+                client_writer.releaseLock()
+                return remote_readable.pipeTo(client_writable)
+            })
             .then(resolve)
             .catch(reject)
     })
 
     return {
-        readable: download_buffer_stream.readable,
         done,
     }
 }
@@ -319,9 +304,11 @@ async function connect_remote(log, hostname, port, cfg_proxy) {
         log.info(`direct connect [${hostname}]:${port}`)
         const conn = connect({ hostname, port })
         const info = await conn.opened
-        log.debug(`connection opened:`, info.remoteAddress)
+        log.debug(`connection opened: ${info.remoteAddress}`)
         return conn
-    } catch {}
+    } catch (err) {
+        log.debug(`direct connect failed: ${err}`)
+    }
 
     const proxy = pick_random_proxy(cfg_proxy)
     if (proxy) {
@@ -335,17 +322,129 @@ async function connect_remote(log, hostname, port, cfg_proxy) {
     throw new Error('all attempts failed')
 }
 
-async function dial(cfg, log, client_readable) {
+async function parse_header(log, uuid_str, client_readable) {
     const reader = client_readable.getReader()
-    let vless
     try {
-        vless = await read_vless_header(reader, cfg.UUID)
+        return await read_vless_header(reader, uuid_str)
     } catch (err) {
         drain_connection(log, reader).catch((err) =>
             log.info(`drain error: ${err}`),
         )
         throw new Error(`read vless header error: ${err.message}`)
     }
+}
+
+async function read_atleast(reader, n) {
+    const buffs = []
+    let done = false
+    while (n > 0 && !done) {
+        const r = await reader.read()
+        if (r.value) {
+            const b = new Uint8Array(r.value)
+            buffs.push(b)
+            n -= get_length(b)
+        }
+        done = r.done
+    }
+    if (n > 0) {
+        throw new Error(`not enough data to read`)
+    }
+
+    return {
+        value: concat_typed_arrays(...buffs),
+        done,
+    }
+}
+
+function create_xhttp_client(log, cfg, client_readable) {
+    const buff_stream = new TransformStream(
+        {
+            transform(chunk, controller) {
+                controller.enqueue(chunk)
+            },
+            cancel(reason) {
+                log.error(`write error: ${reason}`)
+            },
+        },
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+    )
+
+    const headers = {
+        'X-Accel-Buffering': 'no',
+        'Cache-Control': 'no-store',
+        Connection: 'Keep-Alive',
+        'User-Agent': 'Go-http-client/2.0',
+        'Content-Type': 'application/grpc',
+        // 'Content-Type': 'text/event-stream',
+        // 'Transfer-Encoding': 'chunked',
+    }
+    const padding = random_padding(cfg.XPADDING_RANGE)
+    if (padding) {
+        headers['X-Padding'] = padding
+    }
+    const resp = new Response(buff_stream.readable, { headers })
+
+    return {
+        readable: client_readable,
+        writable: buff_stream.writable,
+        resp,
+    }
+}
+
+function create_ws_client(log) {
+    const [ws_client, ws_server] = Object.values(new WebSocketPair())
+    ws_server.accept()
+
+    const readable = new ReadableStream(
+        {
+            start(controller) {
+                ws_server.addEventListener('message', ({ data }) => {
+                    controller.enqueue(data)
+                })
+                ws_server.addEventListener('error', (err) => {
+                    controller.error(err)
+                })
+                ws_server.addEventListener('close', () => {
+                    controller.close()
+                })
+            },
+            cancel(reason) {
+                log.error(`read error: ${reason}`)
+            },
+        },
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+    )
+
+    const writable = new WritableStream(
+        {
+            write(chunk) {
+                ws_server.send(chunk)
+            },
+            close() {
+                ws_server.close()
+            },
+            abort(reason) {
+                log.error(`write error: ${reason}`)
+            },
+        },
+        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+    )
+
+    const resp = new Response(null, {
+        status: 101,
+        webSocket: ws_client,
+    })
+
+    return {
+        readable,
+        writable,
+        resp,
+    }
+}
+
+async function handle_client(cfg, log, client) {
+    const vless = await parse_header(log, cfg.UUID, client.readable)
 
     const remote = await connect_remote(
         log,
@@ -353,126 +452,19 @@ async function dial(cfg, log, client_readable) {
         vless.port,
         cfg.PROXY,
     )
-    return {
+
+    const uploader = create_uploader(vless, remote.writable)
+    const downloader = create_downloader(
         vless,
-        remote,
-    }
-}
-
-async function read_atleast(reader, n) {
-    let len = 0
-    const buffs = []
-    let done = false
-    while (len < n && !done) {
-        const r = await reader.read()
-        if (r.value) {
-            const b = new Uint8Array(r.value)
-            buffs.push(b)
-            len += get_length(b)
-        }
-        done = r.done
-    }
-    if (len < n) {
-        throw new Error(`not enough data to read`)
-    }
-
-    const value = concat_typed_arrays(...buffs)
-    return {
-        value,
-        done,
-    }
-}
-
-async function handle_xhttp(cfg, log, client_readable) {
-    const { vless, remote } = await dial(cfg, log, client_readable)
-    const uploader = create_uploader(log, vless, remote.writable)
-    const downloader = create_xhttp_downloader(vless, remote.readable)
-
-    downloader.done
-        .catch((err) => log.error(`xhttp download error: ${err}`))
-        .finally(() => uploader.done)
-        .catch((err) => log.debug(`xhttp upload error: ${err}`))
-        .finally(() => log.info('connection closed'))
-
-    return downloader.readable
-}
-
-function create_client_ws_readable(log, client_ws_server) {
-    return new ReadableStream(
-        {
-            start(controller) {
-                client_ws_server.addEventListener('message', ({ data }) => {
-                    controller.enqueue(data)
-                })
-                client_ws_server.addEventListener('error', (err) => {
-                    controller.error(err)
-                })
-                client_ws_server.addEventListener('close', () => {
-                    controller.close()
-                })
-            },
-            cancel(reason) {
-                log.error(`ws upload error: ${reason}`)
-            },
-        },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-    )
-}
-
-function create_ws_downloader(log, vless, client_ws_server, remote_readable) {
-    const client_ws_writable = new WritableStream(
-        {
-            write(chunk) {
-                client_ws_server.send(chunk)
-            },
-            abort(reason) {
-                log.error(`ws download error: ${reason}`)
-            },
-        },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-    )
-    const client_ws_writer = client_ws_writable.getWriter()
-
-    const done = new Promise((resolve, reject) => {
-        client_ws_writer
-            .write(vless.resp)
-            .then(() => {
-                client_ws_writer.releaseLock()
-                return remote_readable.pipeTo(client_ws_writable)
-            })
-            .then(resolve)
-            .catch(reject)
-    })
-
-    return {
-        done,
-    }
-}
-
-async function handle_ws(cfg, log, client_ws_server) {
-    client_ws_server.accept()
-    const client_readable = create_client_ws_readable(log, client_ws_server)
-    const { vless, remote } = await dial(cfg, log, client_readable)
-    const uploader = create_uploader(log, vless, remote.writable)
-    const downloader = create_ws_downloader(
-        log,
-        vless,
-        client_ws_server,
+        client.writable,
         remote.readable,
     )
 
     downloader.done
-        .catch((err) => log.error(`ws download error: ${err}`))
+        .catch((err) => log.error(`download error: ${err}`))
         .finally(() => uploader.done)
-        .catch((err) => log.error(`ws upload error: ${err}`))
-        .finally(() => {
-            try {
-                client_ws_server.close()
-            } catch (err) {
-                log.error(`close ws client error: ${err}`)
-            }
-            log.info('connection closed')
-        })
+        .catch((err) => log.debug(`upload error: ${err}`))
+        .finally(() => log.info('connection closed'))
 }
 
 function append_slash(path) {
@@ -727,15 +719,13 @@ async function main(request, env) {
         request.headers.get('Upgrade') === 'websocket' &&
         path.endsWith(cfg.WS_PATH)
     ) {
-        const [client, server] = Object.values(new WebSocketPair())
+        log.info('handle ws client')
+        const client = create_ws_client(log)
         // Do not block here. Client is waiting for upgrade-response.
-        handle_ws(cfg, log, server).catch((err) =>
+        handle_client(cfg, log, client).catch((err) =>
             log.error(`handle ws client error: ${err}`),
         )
-        return new Response(null, {
-            status: 101,
-            webSocket: client,
-        })
+        return client.resp
     }
 
     if (
@@ -743,24 +733,13 @@ async function main(request, env) {
         request.method === 'POST' &&
         path.endsWith(cfg.XHTTP_PATH)
     ) {
+        log.info('handle xhttp client')
         try {
-            const readable = await handle_xhttp(cfg, log, request.body)
-            const headers = {
-                'X-Accel-Buffering': 'no',
-                'Cache-Control': 'no-store',
-                Connection: 'Keep-Alive',
-                'User-Agent': 'Go-http-client/2.0',
-                'Content-Type': 'application/grpc',
-                // 'Content-Type': 'text/event-stream',
-                // 'Transfer-Encoding': 'chunked',
-            }
-            const padding = random_padding(cfg.XPADDING_RANGE)
-            if (padding) {
-                headers['X-Padding'] = padding
-            }
-            return new Response(readable, { headers })
+            const client = create_xhttp_client(log, cfg, request.body)
+            await handle_client(cfg, log, client)
+            return client.resp
         } catch (err) {
-            log.error(`handle xhttp error: ${err}`)
+            log.error(`handle xhttp client error: ${err}`)
         }
         return BAD_REQUEST
     }
