@@ -165,7 +165,7 @@ async function read_vless_header(reader, cfg_uuid_str) {
     let readed_len = buff.value.length
     let header = buff.value
 
-    async function read_until(offset) {
+    async function inner_read_until(offset) {
         if (buff.done) {
             throw new Error('header length too short')
         }
@@ -186,7 +186,7 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
     const pb_len = header[1 + 16]
     const addr_plus1 = 1 + 16 + 1 + pb_len + 1 + 2 + 1
-    await read_until(addr_plus1 + 1)
+    await inner_read_until(addr_plus1 + 1)
 
     const cmd = header[1 + 16 + 1 + pb_len]
     const COMMAND_TYPE_TCP = 1
@@ -211,7 +211,7 @@ async function read_vless_header(reader, cfg_uuid_str) {
     if (header_len < 0) {
         throw new Error('read address type failed')
     }
-    await read_until(header_len)
+    await inner_read_until(header_len)
 
     const idx = addr_plus1
     let hostname = ''
@@ -240,54 +240,16 @@ async function read_vless_header(reader, cfg_uuid_str) {
         port,
         data: header.slice(header_len),
         resp: new Uint8Array([version, 0]),
-        reader,
-        more: !buff.done,
     }
 }
 
-async function upload_to_remote(remote_writer, vless) {
-    if (get_length(vless.data) > 0) {
-        await remote_writer.write(vless.data)
+async function pump(readable, writable, first_packet) {
+    if (get_length(first_packet) > 0) {
+        const writer = writable.getWriter()
+        await writer.write(first_packet)
+        writer.releaseLock()
     }
-    while (vless.more) {
-        const r = await vless.reader.read()
-        if (r.value) {
-            await remote_writer.write(r.value)
-        }
-        if (r.done) {
-            break
-        }
-    }
-    await remote_writer.close()
-}
-
-function create_uploader(vless, remote_writable) {
-    const remote_writer = remote_writable.getWriter()
-    const done = new Promise((resolve, reject) => {
-        upload_to_remote(remote_writer, vless).catch(reject).finally(resolve)
-    })
-    return {
-        done,
-    }
-}
-
-function create_downloader(vless, client_writable, remote_readable) {
-    const client_writer = client_writable.getWriter()
-
-    const done = new Promise((resolve, reject) => {
-        client_writer
-            .write(vless.resp)
-            .then(() => {
-                client_writer.releaseLock()
-                return remote_readable.pipeTo(client_writable)
-            })
-            .then(resolve)
-            .catch(reject)
-    })
-
-    return {
-        done,
-    }
+    await readable.pipeTo(writable)
 }
 
 function pick_random_proxy(cfg_proxy) {
@@ -300,12 +262,16 @@ function pick_random_proxy(cfg_proxy) {
 }
 
 async function connect_remote(log, hostname, port, cfg_proxy) {
-    try {
-        log.info(`direct connect [${hostname}]:${port}`)
-        const conn = connect({ hostname, port })
+    async function inner_connect(remote) {
+        const conn = connect({ hostname: remote, port })
         const info = await conn.opened
         log.debug(`connection opened: ${info.remoteAddress}`)
         return conn
+    }
+
+    try {
+        log.info(`direct connect [${hostname}]:${port}`)
+        return await inner_connect(hostname)
     } catch (err) {
         log.debug(`direct connect failed: ${err}`)
     }
@@ -313,10 +279,7 @@ async function connect_remote(log, hostname, port, cfg_proxy) {
     const proxy = pick_random_proxy(cfg_proxy)
     if (proxy) {
         log.info(`proxy [${hostname}]:${port} through [${proxy}]`)
-        const conn = connect({ hostname: proxy, port })
-        const info = await conn.opened
-        log.debug(`connection opened:`, info.remoteAddress)
-        return conn
+        return await inner_connect(proxy)
     }
 
     throw new Error('all attempts failed')
@@ -325,7 +288,9 @@ async function connect_remote(log, hostname, port, cfg_proxy) {
 async function parse_header(log, uuid_str, client_readable) {
     const reader = client_readable.getReader()
     try {
-        return await read_vless_header(reader, uuid_str)
+        const vless = await read_vless_header(reader, uuid_str)
+        reader.releaseLock()
+        return vless
     } catch (err) {
         drain_connection(log, reader).catch((err) =>
             log.info(`drain error: ${err}`),
@@ -356,14 +321,11 @@ async function read_atleast(reader, n) {
     }
 }
 
-function create_xhttp_client(log, cfg, client_readable) {
+function create_xhttp_client(cfg, client_readable) {
     const buff_stream = new TransformStream(
         {
             transform(chunk, controller) {
                 controller.enqueue(chunk)
-            },
-            cancel(reason) {
-                log.error(`write error: ${reason}`)
             },
         },
         new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
@@ -392,7 +354,7 @@ function create_xhttp_client(log, cfg, client_readable) {
     }
 }
 
-function create_ws_client(log) {
+function create_ws_client() {
     const [ws_client, ws_server] = Object.values(new WebSocketPair())
     ws_server.accept()
 
@@ -409,9 +371,6 @@ function create_ws_client(log) {
                     controller.close()
                 })
             },
-            cancel(reason) {
-                log.error(`read error: ${reason}`)
-            },
         },
         new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
     )
@@ -421,15 +380,15 @@ function create_ws_client(log) {
             write(chunk) {
                 ws_server.send(chunk)
             },
-            close() {
-                ws_server.close()
-            },
-            abort(reason) {
-                log.error(`write error: ${reason}`)
-            },
         },
         new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
     )
+
+    function on_closed() {
+        try {
+            ws_server.close()
+        } catch {}
+    }
 
     const resp = new Response(null, {
         status: 101,
@@ -439,6 +398,7 @@ function create_ws_client(log) {
     return {
         readable,
         writable,
+        on_closed,
         resp,
     }
 }
@@ -453,18 +413,17 @@ async function handle_client(cfg, log, client) {
         cfg.PROXY,
     )
 
-    const uploader = create_uploader(vless, remote.writable)
-    const downloader = create_downloader(
-        vless,
-        client.writable,
-        remote.readable,
-    )
+    const upload_done = pump(client.readable, remote.writable, vless.data)
+    const download_done = pump(remote.readable, client.writable, vless.resp)
 
-    downloader.done
+    download_done
         .catch((err) => log.error(`download error: ${err}`))
-        .finally(() => uploader.done)
+        .finally(() => upload_done)
         .catch((err) => log.debug(`upload error: ${err}`))
-        .finally(() => log.info('connection closed'))
+        .finally(() => {
+            client.on_closed && client.on_closed()
+            log.info('connection closed')
+        })
 }
 
 function append_slash(path) {
@@ -720,7 +679,7 @@ async function main(request, env) {
         path.endsWith(cfg.WS_PATH)
     ) {
         log.info('handle ws client')
-        const client = create_ws_client(log)
+        const client = create_ws_client()
         // Do not block here. Client is waiting for upgrade-response.
         handle_client(cfg, log, client).catch((err) =>
             log.error(`handle ws client error: ${err}`),
@@ -735,7 +694,7 @@ async function main(request, env) {
     ) {
         log.info('handle xhttp client')
         try {
-            const client = create_xhttp_client(log, cfg, request.body)
+            const client = create_xhttp_client(cfg, request.body)
             await handle_client(cfg, log, client)
             return client.resp
         } catch (err) {

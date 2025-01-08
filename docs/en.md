@@ -5,26 +5,28 @@ Please help me improve this document.
 This script is used to deploy vless proxy to Cloudflare workers or pages.
 
 #### Deploy WebSocket proxy to pages
- 1. Download cfxhttp.zip from [releases](https://github.com/vrnobody/cfxhttp/releases), and upload to pages
- 2. Add enviroment variables `UUID` and `WS_PATH`
+ 1. Download `cfxhttp.zip` from [releases](https://github.com/vrnobody/cfxhttp/releases), and upload to pages
+ 2. Add `UUID` and `WS_PATH` enviroment variables
 
 If every thing goes right, you would see a `Hello world!` when accessing `https://your-project-name.pages.dev`.  
 Visit `https://your-project-name.pages.dev/(WS_PATH)/?fragment=true&uuid=(UUID)` to get a client `config.json` with WebSocket transport.  
 Set `fragemnt` to `false` to get a config without fragment settings.  
 
 #### Deploy WebSocket proxy to workers
- 1. Copy source code from [src/index.js](./src/index.js) into workers' code editor
- 2. Add enviroment variables `UUID` and `WS_PATH`
+ 1. Download `cfxhttp.zip` from [releases](https://github.com/vrnobody/cfxhttp/releases), and extract `_worker.js`
+ 2. Copy the source code of `_worker.js` into Cloudflare workers code editor
+ 3. Add `UUID` and `WS_PATH` enviroment variables
 
 The rest is similar to pages.  
 
 #### Deploy xhttp proxy to workers
  1. Pre-requirment: have a domain managed by Cloudflare.
- 2. Enable `gRPC` feature in `network` settings in Cloudflare dashboard.
- 3. Create a DNS `A record` for a new sub-domain with a random IPv4 address. Enable `proxy` option.
- 4. Create a worker and copy-and-paste the source code from [src/index.js](../src/index.js).
- 5. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub-domain.your-website.com/*`.
- 6. Add enviroment variables `UUID` and `WS_PATH`
+ 1. Enable `gRPC` feature in `network` settings in Cloudflare dashboard.
+ 1. Create a DNS `A record` for a new sub-domain with a random IPv4 address. Enable `proxy` option.
+ 1. Download `cfxhttp.zip` from [releases](https://github.com/vrnobody/cfxhttp/releases), and extract `_worker.js`
+ 1. Create a worker and copy-and-paste the source code  of `_worker.js`.
+ 1. Goto worker's config panel, add a routing rule to your new sub-domain. e.g. `sub-domain.your-website.com/*`.
+ 1. Add `UUID` and `WS_PATH` enviroment variables
 
 Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUID)` to get a client `config.json` with xhttp transport.  
 *The xhttp transport can not deploy to Cloudflare pages. [Issue #2](https://github.com/vrnobody/cfxhttp/issues/2)*  
@@ -42,6 +44,7 @@ Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUI
  * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`
 
 #### Notice
+ * `src/index.js` is under developing, could have bugs, please download `Source code (zip)` from releases.
  * This script is slow, do not expect too much.
  * Workers and pages do not support UDP. Applications require UDP feature will not work. Such as DNS.
  * Workers and pages have CPU executing-time limit. Applications require long-term connection would disconnect randomly. Such as downloading a big file.
