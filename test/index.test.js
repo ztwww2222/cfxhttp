@@ -6,7 +6,7 @@ test('pick_random_proxy', () => {
     expect(index.pick_random_proxy('')).toBe('')
     expect(index.pick_random_proxy('a.com')).toBe('a.com')
 
-    // one line test
+    // single line test
     let ps = ' ,  p.a.com p.b.com,p.c.com, , , , ,    p.d.com,  ,,,, '
     let r = []
     for (let i = 0; i < 100; i++) {

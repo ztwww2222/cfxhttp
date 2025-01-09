@@ -44,7 +44,7 @@ Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUI
  * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`
 
 #### Notice
- * `src/index.js` is under developing, could have bugs, please download `Source code (zip)` from releases.
+ * `src/index.js` is under developing, could have bugs, please download `Source code (zip)` from [releases](https://github.com/vrnobody/cfxhttp/releases).
  * This script is slow, do not expect too much.
  * Workers and pages do not support UDP. Applications require UDP feature will not work. Such as DNS.
  * Workers and pages have CPU executing-time limit. Applications require long-term connection would disconnect randomly. Such as downloading a big file.

@@ -78,6 +78,8 @@ jobs:
             `${{ env.projName }}.zip` 是 `${{ env.TAG }}` 混淆后的代码
             SHA256: ${{ env.CHECKSUM }}
             Action ID: [${{ github.run_id }}](${{ env.actionRunsUrl }}${{ github.run_id }})
+
+            `Source code (zip)` 里面有明文代码
             更新日志：[update-log.md](https://github.com/vrnobody/cfxhttp/blob/main/docs/update-log.md)
 
             这个发布使用 [attestations](https://docs.github.com/zh/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) 来保证，混淆后的代码没有夹带私货。

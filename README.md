@@ -26,7 +26,8 @@
  1. 在 workers 的配置页面添加路由，指向上面新加的二级域名，例如: `sub-domain.your-website.com/*`
  1. 在设置面板中添加环境变量： `UUID` 和 `XHTTP_PATH`
 
-访问 `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUID)` 获取 xhttp 协议的客户端 `config.json`  
+访问 `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUID)`  
+获取 xhttp 协议的客户端 `config.json`。  
 *xhttp 协议只能部署到 workers，不能部署到 pages 详见 [issue #2](https://github.com/vrnobody/cfxhttp/issues/2)*  
 
 #### 各设置项说明
@@ -42,7 +43,7 @@
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`
 
 #### 注意事项
- * src/index.js 是开发中的代码会有 bug，请到 releases 里面下载 Source code (zip)
+ * src/index.js 是开发中的代码，会有 bug，请到 [releases](https://github.com/vrnobody/cfxhttp/releases) 里面下载 Source code (zip)
  * 网站测速结果是错的，这个脚本很慢，不要有太高的期望
  * workers / pages 不支持 UDP，需要 UDP 功能的应用无法使用，例如：DNS
  * workers / pages 有 CPU 时间限制，需要长时间链接的应用会随机断线，例如：下载大文件
