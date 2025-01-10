@@ -5,7 +5,7 @@ on:
     tags:
       - '**'  # Push events to every tag including hierarchical tags like v1.0/beta
   schedule:
-    - cron: '0 0 * * 5' # every friday UTC
+    - cron: '41 19 * * 4' # UTC+8 every friday 03:41
   workflow_dispatch: # Trigger manually
 
 jobs:
