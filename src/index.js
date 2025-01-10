@@ -19,16 +19,11 @@ const SETTINGS = {
 }
 
 // source code
-const BUFFER_SIZE = 128 * 1024 // download/upload buffer-size in bytes, must smaller than 1 MiB
 
 const BAD_REQUEST = new Response(null, {
     status: 404,
     statusText: 'Bad Request',
 })
-
-function get_length(o) {
-    return (o && (o.byteLength || o.length)) || 0
-}
 
 function validate_uuid(left, right) {
     for (let i = 0; i < 16; i++) {
@@ -130,7 +125,7 @@ function random_uuid() {
 }
 
 function random_padding(range_str) {
-    if (!range_str || typeof range_str !== 'string') {
+    if (!range_str || range_str === '0' || typeof range_str !== 'string') {
         return null
     }
     const range = range_str
@@ -244,7 +239,7 @@ async function read_vless_header(reader, cfg_uuid_str) {
 }
 
 async function pump(readable, writable, first_packet) {
-    if (get_length(first_packet) > 0) {
+    if (first_packet.length > 0) {
         const writer = writable.getWriter()
         await writer.write(first_packet)
         writer.releaseLock()
@@ -285,16 +280,13 @@ async function connect_remote(log, hostname, port, cfg_proxy) {
     throw new Error('all attempts failed')
 }
 
-async function parse_header(log, uuid_str, client_readable) {
+async function parse_header(cfg_uuid, client_readable) {
     const reader = client_readable.getReader()
     try {
-        const vless = await read_vless_header(reader, uuid_str)
+        const vless = await read_vless_header(reader, cfg_uuid)
         reader.releaseLock()
         return vless
     } catch (err) {
-        drain_connection(log, reader).catch((err) =>
-            log.info(`drain error: ${err}`),
-        )
         throw new Error(`read vless header error: ${err.message}`)
     }
 }
@@ -307,7 +299,7 @@ async function read_atleast(reader, n) {
         if (r.value) {
             const b = new Uint8Array(r.value)
             buffs.push(b)
-            n -= get_length(b)
+            n -= b.length
         }
         done = r.done
     }
@@ -322,15 +314,11 @@ async function read_atleast(reader, n) {
 }
 
 function create_xhttp_client(cfg, client_readable) {
-    const buff_stream = new TransformStream(
-        {
-            transform(chunk, controller) {
-                controller.enqueue(chunk)
-            },
+    const buff_stream = new TransformStream({
+        transform(chunk, controller) {
+            controller.enqueue(chunk)
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-    )
+    })
 
     const headers = {
         'X-Accel-Buffering': 'no',
@@ -345,6 +333,7 @@ function create_xhttp_client(cfg, client_readable) {
     if (padding) {
         headers['X-Padding'] = padding
     }
+
     const resp = new Response(buff_stream.readable, { headers })
 
     return {
@@ -358,31 +347,25 @@ function create_ws_client() {
     const [ws_client, ws_server] = Object.values(new WebSocketPair())
     ws_server.accept()
 
-    const readable = new ReadableStream(
-        {
-            start(controller) {
-                ws_server.addEventListener('message', ({ data }) => {
-                    controller.enqueue(data)
-                })
-                ws_server.addEventListener('error', (err) => {
-                    controller.error(err)
-                })
-                ws_server.addEventListener('close', () => {
-                    controller.close()
-                })
-            },
+    const readable = new ReadableStream({
+        start(controller) {
+            ws_server.addEventListener('message', ({ data }) => {
+                controller.enqueue(data)
+            })
+            ws_server.addEventListener('error', (err) => {
+                controller.error(err)
+            })
+            ws_server.addEventListener('close', () => {
+                controller.close()
+            })
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-    )
+    })
 
-    const writable = new WritableStream(
-        {
-            write(chunk) {
-                ws_server.send(chunk)
-            },
+    const writable = new WritableStream({
+        write(chunk) {
+            ws_server.send(chunk)
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
-    )
+    })
 
     function on_closed() {
         try {
@@ -404,7 +387,7 @@ function create_ws_client() {
 }
 
 async function handle_client(cfg, log, client) {
-    const vless = await parse_header(log, cfg.UUID, client.readable)
+    const vless = await parse_header(cfg.UUID, client.readable)
 
     const remote = await connect_remote(
         log,
@@ -527,16 +510,6 @@ const config_template = `{
     }
   ]
 }`
-
-async function drain_connection(log, reader) {
-    log.info(`drain connection`)
-    while (true) {
-        const r = await reader.read()
-        if (r.done) {
-            break
-        }
-    }
-}
 
 async function handle_doh(log, request, url, upstream) {
     const mime_dnsmsg = 'application/dns-message'
@@ -679,12 +652,12 @@ async function main(request, env) {
         path.endsWith(cfg.WS_PATH)
     ) {
         log.info('handle ws client')
-        const client = create_ws_client()
+        const ws = create_ws_client()
         // Do not block here. Client is waiting for upgrade-response.
-        handle_client(cfg, log, client).catch((err) =>
+        handle_client(cfg, log, ws).catch((err) =>
             log.error(`handle ws client error: ${err}`),
         )
-        return client.resp
+        return ws.resp
     }
 
     if (
@@ -693,14 +666,11 @@ async function main(request, env) {
         path.endsWith(cfg.XHTTP_PATH)
     ) {
         log.info('handle xhttp client')
-        try {
-            const client = create_xhttp_client(cfg, request.body)
-            await handle_client(cfg, log, client)
-            return client.resp
-        } catch (err) {
-            log.error(`handle xhttp client error: ${err}`)
-        }
-        return BAD_REQUEST
+        const xhttp = create_xhttp_client(cfg, request.body)
+        handle_client(cfg, log, xhttp).catch((err) =>
+            log.error(`handle xhttp client error: ${err}`),
+        )
+        return xhttp.resp
     }
 
     if (cfg.DOH_QUERY_PATH && append_slash(path).endsWith(cfg.DOH_QUERY_PATH)) {
@@ -727,7 +697,6 @@ export default {
 
     // for unit testing
     concat_typed_arrays,
-    get_length,
     parse_uuid,
     pick_random_proxy,
     random_id,

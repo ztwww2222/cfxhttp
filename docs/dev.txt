@@ -2,7 +2,7 @@
 pnpm update --save
 
 # install obfuscator
-npm install javascript-obfuscator
+pnpm install javascript-obfuscator
 
 # obfuscate
 node_modules/.bin/javascript-obfuscator ./src/index.js --output ./src/_worker.js \
