@@ -241,11 +241,8 @@ async function read_vless_header(reader, cfg_uuid_str) {
 async function pump(readable, writable, first_packet) {
     if (first_packet.length > 0) {
         const writer = writable.getWriter()
-        try {
-            await writer.write(first_packet)
-        } finally {
-            writer.releaseLock()
-        }
+        await writer.write(first_packet)
+        writer.releaseLock()
     }
     await readable.pipeTo(writable)
 }
