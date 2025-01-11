@@ -83,6 +83,25 @@ test('random_padding', () => {
     expect(len >= 3 && len <= 5).toBeTruthy()
 })
 
+test('get_length', () => {
+    function t(o, n) {
+        const r = index.get_length(o)
+        expect(r).toBe(n)
+    }
+
+    t(new Uint8Array([]), 0)
+    t(new ArrayBuffer(0), 0)
+    t(new ArrayBuffer(), 0)
+    t('', 0)
+    t(null, 0)
+    t(undefined, 0)
+    t(void 0, 0)
+
+    t(new Uint8Array([1, 2, 3, 4]), 4)
+    t(new ArrayBuffer(3), 3)
+    t(1234, 0)
+})
+
 test('concat_typed_arrays', () => {
     let a = new Uint8Array([])
     let r = index.concat_typed_arrays(a)
