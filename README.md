@@ -33,6 +33,7 @@
 #### 各设置项说明
  * `UUID` 这个不用解释了吧
  * `PROXY` （可选）反代 CF 网页的服务器，逗号分隔，每次随机抽取一个，格式：`a.com, b.com, ...`
+ * cdn-all.xn--b6gac.eu.org, cdn.xn--b6gac.eu.org, cdn-b100.xn--b6gac.eu.org, edgetunnel.anycast.eu.org, cdn.anycast.eu.org
  * `WS_PATH` ws 协议的访问路径，例如：`/ws`，留空表示关闭这个功能
  * `XHTTP_PATH` xhttp 协议的访问路径，例如：`/xhttp`，留空表示关闭这个功能
  * `XPADDING_RANGE` xhttp 协议回复头中 X-Padding 的长度范围，例如：`100-1000` 或者 `10`，填 `0` 表示关闭这个功能
