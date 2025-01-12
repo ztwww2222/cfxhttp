@@ -1,4 +1,8 @@
-### 发布记录
+### 发布记录 update log
+
+#### v1.0.5 (2025-01-12)
+ * 添加上传、下载缓存大小设置项
+ * add upload/download buffer size setting
 
 #### v1.0.4 (2025-01-10)
  * 重构代码

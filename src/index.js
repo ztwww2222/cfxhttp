@@ -16,10 +16,11 @@ const SETTINGS = {
     ['UPSTREAM_DOH']: 'https://dns.google/dns-query', // upstream DNS over HTTP(S) server
 
     ['IP_QUERY_PATH']: '', // URL path for querying client IP information, empty means disabled
+
+    ['BUFFER_SIZE']: '32', // Upload/Download buffer size in KiB
 }
 
 // source code
-const BUFFER_SIZE = 128 * 1024 // download/upload buffer-size in bytes, must smaller than 1 MiB
 
 const BAD_REQUEST = new Response(null, {
     status: 404,
@@ -321,7 +322,7 @@ async function read_atleast(reader, n) {
     }
 }
 
-function create_xhttp_client(cfg, client_readable) {
+function create_xhttp_client(cfg, buff_size, client_readable) {
     const abort_ctrl = new AbortController()
 
     const buff_stream = new TransformStream(
@@ -334,7 +335,7 @@ function create_xhttp_client(cfg, client_readable) {
                 }
             },
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+        new ByteLengthQueuingStrategy({ highWaterMark: buff_size }),
     )
 
     const headers = {
@@ -360,7 +361,7 @@ function create_xhttp_client(cfg, client_readable) {
     }
 }
 
-function create_ws_client(ws_client, ws_server) {
+function create_ws_client(buff_size, ws_client, ws_server) {
     const abort_ctrl = new AbortController()
 
     const readable = new ReadableStream(
@@ -384,7 +385,7 @@ function create_ws_client(ws_client, ws_server) {
                 })
             },
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+        new ByteLengthQueuingStrategy({ highWaterMark: buff_size }),
     )
 
     const writable = new WritableStream(
@@ -397,7 +398,7 @@ function create_ws_client(ws_client, ws_server) {
                 }
             },
         },
-        new ByteLengthQueuingStrategy({ highWaterMark: BUFFER_SIZE }),
+        new ByteLengthQueuingStrategy({ highWaterMark: buff_size }),
     )
 
     const resp = new Response(null, {
@@ -682,6 +683,7 @@ async function handle_request(cfg, log, request) {
     }
 
     const path = url.pathname
+    const buff_size = parseInt(cfg.BUFFER_SIZE) * 1024
 
     if (
         cfg.WS_PATH &&
@@ -690,7 +692,7 @@ async function handle_request(cfg, log, request) {
     ) {
         log.info('handle ws client')
         const [ws_client, ws_server] = new WebSocketPair()
-        const client = create_ws_client(ws_client, ws_server)
+        const client = create_ws_client(buff_size, ws_client, ws_server)
         // Do not block here. Client is waiting for upgrade-response.
         setTimeout(() => {
             try {
@@ -709,7 +711,7 @@ async function handle_request(cfg, log, request) {
         path.endsWith(cfg.XHTTP_PATH)
     ) {
         log.info('handle xhttp client')
-        const client = create_xhttp_client(cfg, request.body)
+        const client = create_xhttp_client(cfg, buff_size, request.body)
         const ok = await handle_client(cfg, log, client)
         return ok ? client.resp : BAD_REQUEST
     }
