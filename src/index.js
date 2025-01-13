@@ -18,6 +18,8 @@ const SETTINGS = {
     ['IP_QUERY_PATH']: '', // URL path for querying client IP information, empty means disabled
 
     ['BUFFER_SIZE']: '32', // Upload/Download buffer size in KiB, set to '0' to disable buffering.
+
+    ['YIELD_STEPS']: '300', // A magic number. Testing.
 }
 
 // source code
@@ -243,29 +245,77 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 }
 
-async function pump(log, tag, src, dest, first_packet, options) {
-    try {
-        if (first_packet.length > 0) {
-            const writer = dest.writable.getWriter()
-            try {
-                await writer.write(first_packet)
-            } finally {
-                writer.releaseLock()
-            }
+function relay(log, steps, client, remote, vless) {
+    // log.debug(`current yield steps: ${steps}`)
+
+    const signal = client.signal
+
+    async function write(w, d) {
+        if (d && d.byteLength > 0) {
+            await w.write(d)
         }
-        await src.readable.pipeTo(dest.writable, options)
-    } catch (err) {
-        if (!(err instanceof AbortError)) {
-            log.info(`${tag} error: ${err.message}`)
-        }
-        try {
-            await dest.writable.close()
-        } catch (err) {
-            log.error(`close writable error: ${err}`)
-        }
-    } finally {
-        src.reading_done && src.reading_done()
     }
+
+    function close_writer(w) {
+        w.close().catch((err) => log.error(`close writer error: ${err}`))
+    }
+
+    async function pipe(resolve, reject, reader, writer) {
+        try {
+            for (let c = 0; c < steps; c++) {
+                if (signal.aborted) {
+                    resolve() // reject() would print error message
+                    return
+                }
+                const r = await reader.read()
+                await write(writer, r.value)
+                if (r.done) {
+                    resolve()
+                    return
+                }
+            }
+
+            // log.debug(`yield`)
+            setTimeout(() => pipe(resolve, reject, reader, writer), 0)
+            return
+        } catch (err) {
+            reject(err)
+        }
+    }
+
+    function pump(src, dest, first_packet, writer_closer) {
+        const reader = src.readable.getReader()
+        const writer = dest.writable.getWriter()
+        return new Promise((resolve, reject) => {
+            function on_closing() {
+                writer_closer && writer_closer(writer)
+                src.reading_done && src.reading_done()
+            }
+
+            function inner_resolve() {
+                on_closing()
+                resolve()
+            }
+
+            function inner_reject(err) {
+                on_closing()
+                reject(err)
+            }
+
+            write(writer, first_packet)
+                .catch(inner_reject)
+                .then(() => pipe(inner_resolve, inner_reject, reader, writer))
+        })
+    }
+
+    log.debug(`relay starts`)
+    const uploader = pump(client, remote, vless.data).catch((err) =>
+        log.error(`upload error: ${err.message}`),
+    )
+    const downloader = pump(remote, client, vless.resp, close_writer).catch(
+        (err) => log.error(`download error: ${err.message}`),
+    )
+    downloader.finally(() => uploader).finally(() => log.info(`relay finished`))
 }
 
 function pick_random_proxy(cfg_proxy) {
@@ -380,7 +430,7 @@ function create_xhttp_client(cfg, buff_size, client_readable) {
     return {
         readable: client_readable,
         writable: buff_stream.writable,
-        pipe_to_options: { signal: abort_ctrl.signal },
+        signal: abort_ctrl.signal,
         resp,
     }
 }
@@ -479,7 +529,7 @@ function create_ws_client(log, buff_size, ws_client, ws_server) {
         readable,
         writable,
         resp,
-        pipe_to_options: { signal: abort_ctrl.signal },
+        signal: abort_ctrl.signal,
 
         close,
         reading_done,
@@ -496,20 +546,8 @@ async function handle_client(cfg, log, client) {
             cfg.PROXY,
         )
 
-        const opt = client.pipe_to_options
-        const uploader = pump(log, 'upload', client, remote, vless.data, opt)
-        const downloader = pump(
-            log,
-            'download',
-            remote,
-            client,
-            vless.resp,
-            opt,
-        )
-
-        Promise.all([uploader, downloader]).finally(() =>
-            log.info('pumps closed'),
-        )
+        const steps = parseInt(cfg.YIELD_STEPS)
+        relay(log, steps, client, remote, vless)
         return true
     } catch (err) {
         log.error(`handle client error: ${err.message}`)
@@ -771,7 +809,7 @@ async function handle_request(cfg, log, request) {
         request.headers.get('Upgrade') === 'websocket' &&
         path.endsWith(cfg.WS_PATH)
     ) {
-        log.info('accept ws client')
+        log.debug('accept ws client')
         const [ws_client, ws_server] = new WebSocketPair()
         const client = create_ws_client(log, buff_size, ws_client, ws_server)
         setTimeout(() => {
@@ -791,7 +829,7 @@ async function handle_request(cfg, log, request) {
         request.method === 'POST' &&
         path.endsWith(cfg.XHTTP_PATH)
     ) {
-        log.info('accept xhttp client')
+        log.debug('accept xhttp client')
         const client = create_xhttp_client(cfg, buff_size, request.body)
         const ok = await handle_client(cfg, log, client)
         return ok ? client.resp : BAD_REQUEST
