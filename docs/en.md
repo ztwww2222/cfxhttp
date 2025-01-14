@@ -42,6 +42,7 @@ Visit `https://sub-domain.your-website.com/(XHTTP_PATH)/?fragment=true&uuid=(UUI
  * `IP_QUERY_PATH` URL path for querying client IP information feature. e.g. `/ip-query/?key=123456`. Leave it empty to disable this feature. The `key` parameter is used for authentication.
  * `LOG_LEVEL` debug, info, error, none
  * `TIME_ZONE` Timestamp time zone of logs. e.g. Argentina is `-3`
+ * `BUFFER_SIZE` Upload/Download buffer size in KiB. Default value is 32 KiB. (v1.0.6+) Set to `'0'` to disable buffering. I don't know what the optimal value is. XD
 
 #### Notice
  * `src/index.js` is under developing, could have bugs, please download `Source code (zip)` from [releases](https://github.com/vrnobody/cfxhttp/releases).

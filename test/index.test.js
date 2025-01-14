@@ -103,6 +103,16 @@ test('concat_typed_arrays', () => {
     expect(r[1]).toBe(2)
     expect(r[4]).toBe(5)
 
+    r = index.concat_typed_arrays(c, a, b)
+    expect(r.length).toBe(2 + 3)
+    expect(r[1]).toBe(2)
+    expect(r[4]).toBe(5)
+
+    r = index.concat_typed_arrays(a, b, c)
+    expect(r.length).toBe(2 + 3)
+    expect(r[1]).toBe(2)
+    expect(r[4]).toBe(5)
+
     c = new Uint8Array([7, 8])
     r = index.concat_typed_arrays(a, c, b)
     expect(r.length).toBe(2 + 2 + 3)

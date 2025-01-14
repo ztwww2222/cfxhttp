@@ -1,4 +1,14 @@
-### 发布记录
+### 发布记录 update log
+
+#### v1.0.6 (not release yet)
+ * 传输完成后关闭 ws 链接
+ * 用 for 循环取代 stream.pipeTo()
+ * close ws server properly
+ * replace stream.pipeTo() with for loop
+
+#### v1.0.5 (2025-01-12)
+ * 添加上传、下载缓存大小设置项
+ * add upload/download buffer size setting
 
 #### v1.0.4 (2025-01-10)
  * 重构代码

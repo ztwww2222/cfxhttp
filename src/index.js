@@ -16,6 +16,10 @@ const SETTINGS = {
     ['UPSTREAM_DOH']: 'https://dns.google/dns-query', // upstream DNS over HTTP(S) server
 
     ['IP_QUERY_PATH']: '', // URL path for querying client IP information, empty means disabled
+
+    ['BUFFER_SIZE']: '32', // Upload/Download buffer size in KiB, set to '0' to disable buffering.
+
+    ['YIELD_STEPS']: '300', // A magic number. Testing.
 }
 
 // source code
@@ -156,22 +160,25 @@ function parse_uuid(uuid) {
 }
 
 async function read_vless_header(reader, cfg_uuid_str) {
-    let buff = await read_atleast(reader, 1 + 16 + 1)
-    let readed_len = buff.value.length
-    let header = buff.value
+    let readed_len = 0
+    let header = new Uint8Array()
 
+    // prevent inner_read_until() throw error
+    let read_result = { value: header, done: false }
     async function inner_read_until(offset) {
-        if (buff.done) {
+        if (read_result.done) {
             throw new Error('header length too short')
         }
         const len = offset - readed_len
         if (len < 1) {
             return
         }
-        buff = await read_atleast(reader, len)
-        readed_len += buff.value.length
-        header = concat_typed_arrays(header, buff.value)
+        read_result = await read_atleast(reader, len)
+        readed_len += read_result.value.length
+        header = concat_typed_arrays(header, read_result.value)
     }
+
+    await inner_read_until(1 + 16 + 1)
 
     const version = header[0]
     const uuid = header.slice(1, 1 + 16)
@@ -238,13 +245,77 @@ async function read_vless_header(reader, cfg_uuid_str) {
     }
 }
 
-async function pump(readable, writable, first_packet) {
-    if (first_packet.length > 0) {
-        const writer = writable.getWriter()
-        await writer.write(first_packet)
-        writer.releaseLock()
+function relay(log, steps, client, remote, vless) {
+    // log.debug(`current yield steps: ${steps}`)
+
+    const signal = client.signal
+
+    async function write(w, d) {
+        if (d && d.byteLength > 0) {
+            await w.write(d)
+        }
     }
-    await readable.pipeTo(writable)
+
+    function close_writer(w) {
+        w.close().catch((err) => log.error(`close writer error: ${err}`))
+    }
+
+    async function pipe(resolve, reject, reader, writer) {
+        try {
+            for (let c = 0; c < steps; c++) {
+                if (signal.aborted) {
+                    resolve() // reject() would print error message
+                    return
+                }
+                const r = await reader.read()
+                await write(writer, r.value)
+                if (r.done) {
+                    resolve()
+                    return
+                }
+            }
+
+            // log.debug(`yield`)
+            setTimeout(() => pipe(resolve, reject, reader, writer), 0)
+            return
+        } catch (err) {
+            reject(err)
+        }
+    }
+
+    function pump(src, dest, first_packet, writer_closer) {
+        const reader = src.readable.getReader()
+        const writer = dest.writable.getWriter()
+        return new Promise((resolve, reject) => {
+            function on_closing() {
+                writer_closer && writer_closer(writer)
+                src.reading_done && src.reading_done()
+            }
+
+            function inner_resolve() {
+                on_closing()
+                resolve()
+            }
+
+            function inner_reject(err) {
+                on_closing()
+                reject(err)
+            }
+
+            write(writer, first_packet)
+                .catch(inner_reject)
+                .then(() => pipe(inner_resolve, inner_reject, reader, writer))
+        })
+    }
+
+    log.debug(`relay starts`)
+    const uploader = pump(client, remote, vless.data).catch((err) =>
+        log.error(`upload error: ${err.message}`),
+    )
+    const downloader = pump(remote, client, vless.resp, close_writer).catch(
+        (err) => log.error(`download error: ${err.message}`),
+    )
+    downloader.finally(() => uploader).finally(() => log.info(`relay finished`))
 }
 
 function pick_random_proxy(cfg_proxy) {
@@ -256,34 +327,47 @@ function pick_random_proxy(cfg_proxy) {
     return r || ''
 }
 
+function timed_connect(hostname, port, ms) {
+    return new Promise((resolve, reject) => {
+        const conn = connect({ hostname, port })
+        const handle = setTimeout(() => {
+            reject(new Error(`connet timeout`))
+        }, ms)
+        conn.opened
+            .then(() => {
+                clearTimeout(handle)
+                resolve(conn)
+            })
+            .catch((err) => {
+                clearTimeout(handle)
+                reject(err)
+            })
+    })
+}
+
 async function connect_remote(log, hostname, port, cfg_proxy) {
-    async function inner_connect(remote) {
-        const conn = connect({ hostname: remote, port })
-        const info = await conn.opened
-        log.debug(`connection opened: ${info.remoteAddress}`)
-        return conn
-    }
+    const timeout = 8000
 
     try {
         log.info(`direct connect [${hostname}]:${port}`)
-        return await inner_connect(hostname)
+        return await timed_connect(hostname, port, timeout)
     } catch (err) {
-        log.debug(`direct connect failed: ${err}`)
+        log.debug(`direct connect failed: ${err.message}`)
     }
 
     const proxy = pick_random_proxy(cfg_proxy)
     if (proxy) {
         log.info(`proxy [${hostname}]:${port} through [${proxy}]`)
-        return await inner_connect(proxy)
+        return await timed_connect(proxy, port, timeout)
     }
 
     throw new Error('all attempts failed')
 }
 
-async function parse_header(cfg_uuid, client_readable) {
-    const reader = client_readable.getReader()
+async function parse_header(uuid_str, client) {
     try {
-        const vless = await read_vless_header(reader, cfg_uuid)
+        const reader = client.readable.getReader()
+        const vless = await read_vless_header(reader, uuid_str)
         reader.releaseLock()
         return vless
     } catch (err) {
@@ -306,19 +390,27 @@ async function read_atleast(reader, n) {
     if (n > 0) {
         throw new Error(`not enough data to read`)
     }
-
     return {
         value: concat_typed_arrays(...buffs),
         done,
     }
 }
 
-function create_xhttp_client(cfg, client_readable) {
-    const buff_stream = new TransformStream({
-        transform(chunk, controller) {
-            controller.enqueue(chunk)
+function create_xhttp_client(cfg, buff_size, client_readable) {
+    const abort_ctrl = new AbortController()
+
+    const buff_stream = new TransformStream(
+        {
+            transform(chunk, controller) {
+                try {
+                    controller.enqueue(chunk)
+                } catch {
+                    abort_ctrl.abort()
+                }
+            },
         },
-    })
+        create_queuing_strategy(buff_size),
+    )
 
     const headers = {
         'X-Accel-Buffering': 'no',
@@ -333,45 +425,100 @@ function create_xhttp_client(cfg, client_readable) {
     if (padding) {
         headers['X-Padding'] = padding
     }
-
     const resp = new Response(buff_stream.readable, { headers })
 
     return {
         readable: client_readable,
         writable: buff_stream.writable,
+        signal: abort_ctrl.signal,
         resp,
     }
 }
 
-function create_ws_client() {
-    const [ws_client, ws_server] = Object.values(new WebSocketPair())
-    ws_server.accept()
+function create_queuing_strategy(buff_size) {
+    return buff_size > 0
+        ? new ByteLengthQueuingStrategy({ highWaterMark: buff_size })
+        : null
+}
 
-    const readable = new ReadableStream({
-        start(controller) {
-            ws_server.addEventListener('message', ({ data }) => {
-                controller.enqueue(data)
-            })
-            ws_server.addEventListener('error', (err) => {
-                controller.error(err)
-            })
-            ws_server.addEventListener('close', () => {
-                controller.close()
-            })
-        },
-    })
+function create_ws_client(log, buff_size, ws_client, ws_server) {
+    const abort_ctrl = new AbortController()
 
-    const writable = new WritableStream({
-        write(chunk) {
-            ws_server.send(chunk)
-        },
-    })
+    let is_ws_server_running = true
+    let reading = true
+    let writing = true
 
-    function on_closed() {
+    function close() {
+        if (!is_ws_server_running) {
+            return
+        }
+        is_ws_server_running = false
         try {
             ws_server.close()
-        } catch {}
+        } catch (err) {
+            log.error(`close ws server error: ${err}`)
+        }
     }
+
+    function try_close() {
+        if (reading || writing) {
+            return
+        }
+        close(true)
+    }
+
+    // readable.cancel() is not reliable
+    function reading_done() {
+        reading = false
+        log.debug(`ws reader closed`)
+        try_close()
+    }
+
+    const readable = new ReadableStream(
+        {
+            start(controller) {
+                ws_server.addEventListener('message', ({ data }) => {
+                    try {
+                        controller.enqueue(data)
+                    } catch {}
+                })
+                ws_server.addEventListener('error', (err) => {
+                    log.error(`ws server error: ${err.message}`)
+                    abort_ctrl.abort()
+                    try {
+                        controller.error(err)
+                    } catch {}
+                })
+                ws_server.addEventListener('close', () => {
+                    log.debug(`ws server closed`)
+                    is_ws_server_running = false
+                    abort_ctrl.abort()
+                    try {
+                        controller.close()
+                    } catch {}
+                })
+            },
+        },
+        create_queuing_strategy(buff_size),
+    )
+
+    const writable = new WritableStream(
+        {
+            write(chunk) {
+                try {
+                    ws_server.send(chunk)
+                } catch {
+                    abort_ctrl.abort()
+                }
+            },
+            close() {
+                log.debug(`ws writer closed`)
+                writing = false
+                try_close()
+            },
+        },
+        create_queuing_strategy(buff_size),
+    )
 
     const resp = new Response(null, {
         status: 101,
@@ -381,32 +528,32 @@ function create_ws_client() {
     return {
         readable,
         writable,
-        on_closed,
         resp,
+        signal: abort_ctrl.signal,
+
+        close,
+        reading_done,
     }
 }
 
 async function handle_client(cfg, log, client) {
-    const vless = await parse_header(cfg.UUID, client.readable)
+    try {
+        const vless = await parse_header(cfg.UUID, client)
+        const remote = await connect_remote(
+            log,
+            vless.hostname,
+            vless.port,
+            cfg.PROXY,
+        )
 
-    const remote = await connect_remote(
-        log,
-        vless.hostname,
-        vless.port,
-        cfg.PROXY,
-    )
-
-    const upload_done = pump(client.readable, remote.writable, vless.data)
-    const download_done = pump(remote.readable, client.writable, vless.resp)
-
-    download_done
-        .catch((err) => log.error(`download error: ${err}`))
-        .finally(() => upload_done)
-        .catch((err) => log.debug(`upload error: ${err}`))
-        .finally(() => {
-            client.on_closed && client.on_closed()
-            log.info('connection closed')
-        })
+        const steps = parseInt(cfg.YIELD_STEPS)
+        relay(log, steps, client, remote, vless)
+        return true
+    } catch (err) {
+        log.error(`handle client error: ${err.message}`)
+        client.close && client.close()
+    }
+    return false
 }
 
 function append_slash(path) {
@@ -637,27 +784,44 @@ Refresh this page to re-generate a random settings example.`
 
 async function main(request, env) {
     const cfg = load_settings(env, SETTINGS)
+    const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
+    try {
+        const resp = await handle_request(cfg, log, request)
+        return resp
+    } catch (err) {
+        log.error(`unhandled error: ${err}`)
+    }
+    return BAD_REQUEST
+}
+
+async function handle_request(cfg, log, request) {
     const url = new URL(request.url)
     if (!cfg.UUID) {
         const text = example(url)
         return new Response(text)
     }
 
-    const log = new Logger(cfg.LOG_LEVEL, cfg.TIME_ZONE)
     const path = url.pathname
+    const buff_size = parseInt(cfg.BUFFER_SIZE) * 1024
 
     if (
         cfg.WS_PATH &&
         request.headers.get('Upgrade') === 'websocket' &&
         path.endsWith(cfg.WS_PATH)
     ) {
-        log.info('handle ws client')
-        const ws = create_ws_client()
-        // Do not block here. Client is waiting for upgrade-response.
-        handle_client(cfg, log, ws).catch((err) =>
-            log.error(`handle ws client error: ${err}`),
-        )
-        return ws.resp
+        log.debug('accept ws client')
+        const [ws_client, ws_server] = new WebSocketPair()
+        const client = create_ws_client(log, buff_size, ws_client, ws_server)
+        setTimeout(() => {
+            try {
+                ws_server.accept()
+            } catch (err) {
+                log.error(`accept ws client error: ${err.message}`)
+                client.close && client.close()
+            }
+            handle_client(cfg, log, client)
+        }, 0)
+        return client.resp
     }
 
     if (
@@ -665,12 +829,10 @@ async function main(request, env) {
         request.method === 'POST' &&
         path.endsWith(cfg.XHTTP_PATH)
     ) {
-        log.info('handle xhttp client')
-        const xhttp = create_xhttp_client(cfg, request.body)
-        handle_client(cfg, log, xhttp).catch((err) =>
-            log.error(`handle xhttp client error: ${err}`),
-        )
-        return xhttp.resp
+        log.debug('accept xhttp client')
+        const client = create_xhttp_client(cfg, buff_size, request.body)
+        const ok = await handle_client(cfg, log, client)
+        return ok ? client.resp : BAD_REQUEST
     }
 
     if (cfg.DOH_QUERY_PATH && append_slash(path).endsWith(cfg.DOH_QUERY_PATH)) {

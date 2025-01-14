@@ -84,6 +84,9 @@ jobs:
 
             这个发布使用 [attestations](https://docs.github.com/zh/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) 来保证，混淆后的代码没有夹带私货。
             当然，自己使用明文源代码做混淆更安全。
+
+            `${{ env.projName }}.zip` is the obfuscated code of `${{ env.TAG }}`.
+            `Source code (zip)` contains the plain text source code.
           draft: false
           prerelease: false
           files: "${{ env.projName }}.zip"

@@ -42,6 +42,7 @@
  * `IP_QUERY_PATH` 查询客户 IP 信息功能的访问路径，例如: `/ip-query/?key=123456`，留空表示关闭这个功能，后面那个 key 相当于密码
  * `LOG_LEVEL` 日志级别，可选值：`debug`, `info`, `error`, `none`
  * `TIME_ZONE` 日志时间戳的时区，中国填 `8`
+ * `BUFFER_SIZE` 上传、下载缓存大小，单位 KiB，默认 32 KiB，(v1.0.6+)设置为 `'0'` 禁用缓存，我也不知道应该设为多大
 
 #### 注意事项
  * src/index.js 是开发中的代码，会有 bug，请到 [releases](https://github.com/vrnobody/cfxhttp/releases) 里面下载 Source code (zip)
